@@ -1816,6 +1816,32 @@ void PseudoCFunction::GetExprTextInternal(const HighLevelILInstruction& instr, H
 		}();
 		break;
 
+	case HLIL_PASS_BY_REF:
+		[&]() {
+			const auto srcExpr = instr.GetSourceExpr<HLIL_PASS_BY_REF>();
+			if (srcExpr.operation == HLIL_ADDRESS_OF)
+			{
+				GetExprTextInternal(srcExpr.GetSourceExpr<HLIL_ADDRESS_OF>(), tokens, settings, precedence);
+			}
+			else
+			{
+				tokens.Append(OperationToken, "*");
+				GetExprTextInternal(srcExpr, tokens, settings, UnaryOperatorPrecedence);
+			}
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_RETURN_BY_REF:
+		[&]() {
+			const auto srcExpr = instr.GetSourceExpr<HLIL_RETURN_BY_REF>();
+			GetExprTextInternal(srcExpr, tokens, settings, UnaryOperatorPrecedence);
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
 	case HLIL_FCMP_E:
 		[&]() {
 			bool parens = precedence > EqualityOperatorPrecedence;
@@ -2380,6 +2406,110 @@ void PseudoCFunction::GetExprTextInternal(const HighLevelILInstruction& instr, H
 			tokens.AppendCloseParen();
 			if (parens)
 				tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_BSWAP:
+		[&]() {
+			auto src = instr.GetSourceExpr<HLIL_BSWAP>();
+			string name;
+			if (src.size == 2)
+				name = "__builtin_bswap16";
+			else if (src.size == 4)
+				name = "__builtin_bswap32";
+			else if (src.size == 8)
+				name = "__builtin_bswap64";
+			else
+				name = "__builtin_bswap";
+			tokens.Append(OperationToken, name);
+			tokens.AppendOpenParen();
+			GetExprTextInternal(src, tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_POPCNT:
+		[&]() {
+			auto src = instr.GetSourceExpr<HLIL_POPCNT>();
+			tokens.Append(OperationToken, src.size > 4 ? "__builtin_popcountll" : "__builtin_popcount");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(src, tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_CLZ:
+		[&]() {
+			auto src = instr.GetSourceExpr<HLIL_CLZ>();
+			tokens.Append(OperationToken, src.size > 4 ? "__builtin_clzll" : "__builtin_clz");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(src, tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_CTZ:
+		[&]() {
+			auto src = instr.GetSourceExpr<HLIL_CTZ>();
+			tokens.Append(OperationToken, src.size > 4 ? "__builtin_ctzll" : "__builtin_ctz");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(src, tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_RBIT:
+		[&]() {
+			tokens.Append(OperationToken, "__rbit");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(instr.GetSourceExpr<HLIL_RBIT>(), tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_CLS:
+		[&]() {
+			tokens.Append(OperationToken, "__cls");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(instr.GetSourceExpr<HLIL_CLS>(), tokens, settings);
+			tokens.AppendCloseParen();
+			if (statement)
+				tokens.AppendSemicolon();
+		}();
+		break;
+
+	case HLIL_MINS:
+	case HLIL_MINU:
+		AppendTwoOperandFunction("min", instr, tokens, settings, false);
+		if (statement)
+			tokens.AppendSemicolon();
+		break;
+
+	case HLIL_MAXS:
+	case HLIL_MAXU:
+		AppendTwoOperandFunction("max", instr, tokens, settings, false);
+		if (statement)
+			tokens.AppendSemicolon();
+		break;
+
+	case HLIL_ABS:
+		[&]() {
+			tokens.Append(OperationToken, "abs");
+			tokens.AppendOpenParen();
+			GetExprTextInternal(instr.GetSourceExpr<HLIL_ABS>(), tokens, settings);
+			tokens.AppendCloseParen();
 			if (statement)
 				tokens.AppendSemicolon();
 		}();

@@ -191,6 +191,8 @@ class HighLevelILInstruction(BaseILInstruction):
 	        ("dest", "expr_list"), ("dest_memory", "int"), ("src", "expr"), ("src_memory", "int")
 	    ], HighLevelILOperation.HLIL_VAR: [("var", "var")], HighLevelILOperation.HLIL_VAR_SSA: [
 	        ("var", "var_ssa")
+	    ], HighLevelILOperation.HLIL_VAR_SSA_PARTIAL: [
+	        ("var", "var_ssa_dest_and_src"), ("prev", "var_ssa_dest_and_src")
 	    ], HighLevelILOperation.HLIL_VAR_PHI: [("dest", "var_ssa"),
 	                                           ("src", "var_ssa_list")], HighLevelILOperation.HLIL_MEM_PHI: [
 	                                               ("dest", "int"), ("src", "int_list")
@@ -210,7 +212,11 @@ class HighLevelILInstruction(BaseILInstruction):
 	    ], HighLevelILOperation.HLIL_DEREF_FIELD_SSA: [
 	        ("src", "expr"), ("src_memory", "int"), ("offset", "int"),
 	        ("member_index", "member_index")
-	    ], HighLevelILOperation.HLIL_ADDRESS_OF: [("src", "expr")], HighLevelILOperation.HLIL_CONST: [
+	    ], HighLevelILOperation.HLIL_ADDRESS_OF: [("src", "expr")], HighLevelILOperation.HLIL_PASS_BY_REF: [
+	        ("src", "expr")
+	    ], HighLevelILOperation.HLIL_RETURN_BY_REF: [
+			("src", "expr")
+		], HighLevelILOperation.HLIL_CONST: [
 	        ("constant", "int")
 	    ], HighLevelILOperation.HLIL_CONST_PTR: [("constant", "int")], HighLevelILOperation.HLIL_EXTERN_PTR: [
 	        ("constant", "int"), ("offset", "int")
@@ -244,7 +250,19 @@ class HighLevelILInstruction(BaseILInstruction):
 	        ("left", "expr"), ("right", "expr")
 	    ], HighLevelILOperation.HLIL_MODS_DP: [("left", "expr"), ("right", "expr")], HighLevelILOperation.HLIL_NEG: [
 	        ("src", "expr")
-	    ], HighLevelILOperation.HLIL_NOT: [("src", "expr")], HighLevelILOperation.HLIL_SX: [
+	    ], HighLevelILOperation.HLIL_NOT: [("src", "expr")], HighLevelILOperation.HLIL_BSWAP: [
+	        ("src", "expr")
+	    ], HighLevelILOperation.HLIL_POPCNT: [("src", "expr")], HighLevelILOperation.HLIL_CLZ: [
+	        ("src", "expr")
+	    ], HighLevelILOperation.HLIL_CTZ: [("src", "expr")], HighLevelILOperation.HLIL_RBIT: [
+	        ("src", "expr")
+	    ], HighLevelILOperation.HLIL_CLS: [("src", "expr")], HighLevelILOperation.HLIL_MINS: [
+	        ("left", "expr"), ("right", "expr")
+	    ], HighLevelILOperation.HLIL_MAXS: [("left", "expr"), ("right", "expr")], HighLevelILOperation.HLIL_MINU: [
+	        ("left", "expr"), ("right", "expr")
+	    ], HighLevelILOperation.HLIL_MAXU: [("left", "expr"), ("right", "expr")], HighLevelILOperation.HLIL_ABS: [
+	        ("src", "expr")
+	    ], HighLevelILOperation.HLIL_SX: [
 	        ("src", "expr")
 	    ], HighLevelILOperation.HLIL_ZX: [("src", "expr")], HighLevelILOperation.HLIL_LOW_PART: [
 	        ("src", "expr")
@@ -1537,6 +1555,24 @@ class HighLevelILVarSsa(HighLevelILInstruction, SSAVariableInstruction):
 
 
 @dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILVarSsaPartial(HighLevelILInstruction, SSAVariableInstruction):
+	@property
+	def dest(self) -> 'mediumlevelil.SSAVariable':
+		return self._get_var_ssa(0, 1)
+
+	@property
+	def prev(self) -> 'mediumlevelil.SSAVariable':
+		return self._get_var_ssa(0, 2)
+
+	@property
+	def detailed_operands(self) -> List[Tuple[str, HighLevelILOperandType, str]]:
+		return [
+			("dest", self.dest, "SSAVariable"),
+			("prev", self.prev, "SSAVariable"),
+		]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
 class HighLevelILVarPhi(HighLevelILInstruction, Phi, SetVar):
 	@property
 	def dest(self) -> 'mediumlevelil.SSAVariable':
@@ -1741,6 +1777,16 @@ class HighLevelILAddressOf(HighLevelILUnaryBase):
 		elif isinstance(self.src, HighLevelILStructField) and isinstance(self.src.src, (HighLevelILVar, HighLevelILVarSsa)):
 			return [self.src.src.var]
 		return [*self.src.vars_address_taken]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILPassByRef(HighLevelILUnaryBase):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILReturnByRef(HighLevelILUnaryBase):
+	pass
 
 
 @dataclass(frozen=True, repr=False, eq=False)
@@ -1966,6 +2012,61 @@ class HighLevelILNeg(HighLevelILUnaryBase, Arithmetic):
 
 @dataclass(frozen=True, repr=False, eq=False)
 class HighLevelILNot(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILBswap(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILPopcnt(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILClz(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILCtz(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILRbit(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILCls(HighLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILMins(HighLevelILBinaryBase, Arithmetic, Signed):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILMaxs(HighLevelILBinaryBase, Arithmetic, Signed):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILMinu(HighLevelILBinaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILMaxu(HighLevelILBinaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class HighLevelILAbs(HighLevelILUnaryBase, Arithmetic):
 	pass
 
 
@@ -2414,6 +2515,7 @@ ILInstruction = {
         HighLevelILAssignUnpackMemSsa,  #  ("dest", "expr_list"), ("dest_memory", "int"), ("src", "expr"), ("src_memory", "int"),
     HighLevelILOperation.HLIL_VAR: HighLevelILVar,  #  ("var", "var"),
     HighLevelILOperation.HLIL_VAR_SSA: HighLevelILVarSsa,  #  ("var", "var_ssa"),
+	HighLevelILOperation.HLIL_VAR_SSA_PARTIAL: HighLevelILVarSsaPartial,  #  ("dest", "var_ssa_dest_and_src"), ("prev", "var_ssa_dest_and_src"),
     HighLevelILOperation.HLIL_VAR_PHI: HighLevelILVarPhi,  #  ("dest", "var_ssa"), ("src", "var_ssa_list"),
     HighLevelILOperation.HLIL_MEM_PHI: HighLevelILMemPhi,  #  ("dest", "int"), ("src", "int_list"),
     HighLevelILOperation.HLIL_ARRAY_INDEX: HighLevelILArrayIndex,  #  ("src", "expr"), ("index", "expr"),
@@ -2429,6 +2531,8 @@ ILInstruction = {
     HighLevelILOperation.HLIL_DEREF_FIELD_SSA:
         HighLevelILDerefFieldSsa,  #  ("src", "expr"), ("src_memory", "int"), ("offset", "int"), ("member_index", "member_index"),
     HighLevelILOperation.HLIL_ADDRESS_OF: HighLevelILAddressOf,  #  ("src", "expr"),
+	HighLevelILOperation.HLIL_PASS_BY_REF: HighLevelILPassByRef,  #  ("src", "expr"),
+	HighLevelILOperation.HLIL_RETURN_BY_REF: HighLevelILReturnByRef,  #  ("src", "expr"),
     HighLevelILOperation.HLIL_CONST: HighLevelILConst,  #  ("constant", "int"),
     HighLevelILOperation.HLIL_CONST_PTR: HighLevelILConstPtr,  #  ("constant", "int"),
     HighLevelILOperation.HLIL_EXTERN_PTR: HighLevelILExternPtr,  #  ("constant", "int"), ("offset", "int"),
@@ -2462,6 +2566,17 @@ ILInstruction = {
     HighLevelILOperation.HLIL_MODS_DP: HighLevelILModsDp,  #  ("left", "expr"), ("right", "expr"),
     HighLevelILOperation.HLIL_NEG: HighLevelILNeg,  #  ("src", "expr"),
     HighLevelILOperation.HLIL_NOT: HighLevelILNot,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_BSWAP: HighLevelILBswap,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_POPCNT: HighLevelILPopcnt,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_CLZ: HighLevelILClz,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_CTZ: HighLevelILCtz,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_RBIT: HighLevelILRbit,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_CLS: HighLevelILCls,  #  ("src", "expr"),
+    HighLevelILOperation.HLIL_MINS: HighLevelILMins,  #  ("left", "expr"), ("right", "expr"),
+    HighLevelILOperation.HLIL_MAXS: HighLevelILMaxs,  #  ("left", "expr"), ("right", "expr"),
+    HighLevelILOperation.HLIL_MINU: HighLevelILMinu,  #  ("left", "expr"), ("right", "expr"),
+    HighLevelILOperation.HLIL_MAXU: HighLevelILMaxu,  #  ("left", "expr"), ("right", "expr"),
+    HighLevelILOperation.HLIL_ABS: HighLevelILAbs,  #  ("src", "expr"),
     HighLevelILOperation.HLIL_SX: HighLevelILSx,  #  ("src", "expr"),
     HighLevelILOperation.HLIL_ZX: HighLevelILZx,  #  ("src", "expr"),
     HighLevelILOperation.HLIL_LOW_PART: HighLevelILLowPart,  #  ("src", "expr"),
@@ -3380,6 +3495,30 @@ class HighLevelILFunction:
 		"""
 		return self.expr(HighLevelILOperation.HLIL_ADDRESS_OF, src, size=0, source_location=loc)
 
+	def pass_by_ref(self, size: int, src: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``pass_by_ref`` indicates that ``value`` is being passed by reference to a call with a pointer size of  ``size``
+
+		:param int size: the size of the pointer in bytes
+		:param ExpressionIndex src: the expression containing the reference being passed
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``ref *src``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_PASS_BY_REF, src, size, source_location=loc)
+
+	def return_by_ref(self, size: int, dest: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``return_by_ref`` indicates that ``dest`` is being returned by passing a reference to a call
+
+		:param int size: the size of the value in bytes
+		:param ExpressionIndex dest: the expression containing the target of the return value
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``ref dest``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_RETURN_BY_REF, dest, size, source_location=loc)
+
 	def const(self, size: int, value: int, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
 		"""
 		``const`` returns an expression for the constant integer ``value`` of size ``size``
@@ -3744,6 +3883,66 @@ class HighLevelILFunction:
 		"""
 		return self.expr(HighLevelILOperation.HLIL_MULU_DP, a, b, size=size, source_location=loc)
 
+	def min_signed(
+		self, size: int, a: ExpressionIndex, b: ExpressionIndex, loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``min_signed`` signed minimum of expressions ``a`` and ``b`` returning an expression of ``size`` bytes
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``mins.<size>(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_MINS, a, b, size=size, source_location=loc)
+
+	def max_signed(
+		self, size: int, a: ExpressionIndex, b: ExpressionIndex, loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``max_signed`` signed maximum of expressions ``a`` and ``b`` returning an expression of ``size`` bytes
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``maxs.<size>(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_MAXS, a, b, size=size, source_location=loc)
+
+	def min_unsigned(
+		self, size: int, a: ExpressionIndex, b: ExpressionIndex, loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``min_unsigned`` unsigned minimum of expressions ``a`` and ``b`` returning an expression of ``size`` bytes
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``minu.<size>(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_MINU, a, b, size=size, source_location=loc)
+
+	def max_unsigned(
+		self, size: int, a: ExpressionIndex, b: ExpressionIndex, loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``max_unsigned`` unsigned maximum of expressions ``a`` and ``b`` returning an expression of ``size`` bytes
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``maxu.<size>(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_MAXU, a, b, size=size, source_location=loc)
+
 	def div_signed(
 		self, size: int, a: ExpressionIndex, b: ExpressionIndex, loc: Optional['ILSourceLocation'] = None
 	) -> ExpressionIndex:
@@ -3895,6 +4094,93 @@ class HighLevelILFunction:
 		:rtype: ExpressionIndex
 		"""
 		return self.expr(HighLevelILOperation.HLIL_NOT, value, size=size, source_location=loc)
+
+	def byte_swap(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``byte_swap`` reverses the byte order of expression ``value`` of size ``size``
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to byte swap
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``bswap.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_BSWAP, value, size=size, source_location=loc)
+
+	def population_count(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``population_count`` counts the number of set bits in expression ``value`` of size ``size``
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count set bits in
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``popcnt.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_POPCNT, value, size=size, source_location=loc)
+
+	def count_leading_zeros(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``count_leading_zeros`` counts the leading zero bits in expression ``value`` of size ``size``. The result is
+		``8 * size`` when ``value`` is zero.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count leading zero bits in
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``clz.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_CLZ, value, size=size, source_location=loc)
+
+	def count_trailing_zeros(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``count_trailing_zeros`` counts the trailing zero bits in expression ``value`` of size ``size``. The result is
+		``8 * size`` when ``value`` is zero.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count trailing zero bits in
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``ctz.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_CTZ, value, size=size, source_location=loc)
+
+	def reverse_bits(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``reverse_bits`` reverses the bit order of expression ``value`` of size ``size``
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to reverse the bits of
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``rbit.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_RBIT, value, size=size, source_location=loc)
+
+	def count_leading_signs(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``count_leading_signs`` counts the leading sign bits in expression ``value`` of size ``size`` (the number of bits
+		below the sign bit that match it)
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count leading sign bits in
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``cls.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_CLS, value, size=size, source_location=loc)
+
+	def absolute_value(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
+		"""
+		``absolute_value`` signed absolute value of expression ``value`` of size ``size``
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to take the absolute value of
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``abs.<size>(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(HighLevelILOperation.HLIL_ABS, value, size=size, source_location=loc)
 
 	def sign_extend(self, size: int, value: ExpressionIndex, loc: Optional['ILSourceLocation'] = None) -> ExpressionIndex:
 		"""

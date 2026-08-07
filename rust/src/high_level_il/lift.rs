@@ -71,6 +71,10 @@ pub enum HighLevelILLiftedInstructionKind {
     ModuDp(LiftedBinaryOp),
     Mods(LiftedBinaryOp),
     ModsDp(LiftedBinaryOp),
+    MinSigned(LiftedBinaryOp),
+    MaxSigned(LiftedBinaryOp),
+    MinUnsigned(LiftedBinaryOp),
+    MaxUnsigned(LiftedBinaryOp),
     CmpE(LiftedBinaryOp),
     CmpNe(LiftedBinaryOp),
     CmpSlt(LiftedBinaryOp),
@@ -112,8 +116,17 @@ pub enum HighLevelILLiftedInstructionKind {
     ConstData(LiftedConstData),
     Deref(LiftedUnaryOp),
     AddressOf(LiftedUnaryOp),
+    PassByRef(LiftedUnaryOp),
+    ReturnByRef(LiftedUnaryOp),
     Neg(LiftedUnaryOp),
     Not(LiftedUnaryOp),
+    Bswap(LiftedUnaryOp),
+    Popcnt(LiftedUnaryOp),
+    Clz(LiftedUnaryOp),
+    Ctz(LiftedUnaryOp),
+    Rbit(LiftedUnaryOp),
+    Cls(LiftedUnaryOp),
+    Abs(LiftedUnaryOp),
     Sx(LiftedUnaryOp),
     Zx(LiftedUnaryOp),
     LowPart(LiftedUnaryOp),
@@ -156,6 +169,7 @@ pub enum HighLevelILLiftedInstructionKind {
     VarInitSsa(LiftedVarInitSsa),
     VarPhi(LiftedVarPhi),
     VarSsa(VarSsa),
+    VarSsaPartial(VarSsaPartial),
     While(LiftedWhile),
     DoWhile(LiftedWhile),
     WhileSsa(LiftedWhileSsa),
@@ -199,6 +213,10 @@ impl HighLevelILLiftedInstruction {
             ModuDp(_) => "ModuDp",
             Mods(_) => "Mods",
             ModsDp(_) => "ModsDp",
+            MinSigned(_) => "MinSigned",
+            MaxSigned(_) => "MaxSigned",
+            MinUnsigned(_) => "MinUnsigned",
+            MaxUnsigned(_) => "MaxUnsigned",
             CmpE(_) => "CmpE",
             CmpNe(_) => "CmpNe",
             CmpSlt(_) => "CmpSlt",
@@ -240,8 +258,17 @@ impl HighLevelILLiftedInstruction {
             ConstData(_) => "ConstData",
             Deref(_) => "Deref",
             AddressOf(_) => "AddressOf",
+            PassByRef(_) => "PassByRef",
+            ReturnByRef(_) => "ReturnByRef",
             Neg(_) => "Neg",
             Not(_) => "Not",
+            Bswap(_) => "Bswap",
+            Popcnt(_) => "Popcnt",
+            Clz(_) => "Clz",
+            Ctz(_) => "Ctz",
+            Rbit(_) => "Rbit",
+            Cls(_) => "Cls",
+            Abs(_) => "Abs",
             Sx(_) => "Sx",
             Zx(_) => "Zx",
             LowPart(_) => "LowPart",
@@ -284,6 +311,7 @@ impl HighLevelILLiftedInstruction {
             VarInitSsa(_) => "VarInitSsa",
             VarPhi(_) => "VarPhi",
             VarSsa(_) => "VarSsa",
+            VarSsaPartial(_) => "VarSsaPartial",
             While(_) => "While",
             DoWhile(_) => "DoWhile",
             WhileSsa(_) => "WhileSsa",
@@ -303,7 +331,8 @@ impl HighLevelILLiftedInstruction {
             ],
             Add(op) | Sub(op) | And(op) | Or(op) | Xor(op) | Lsl(op) | Lsr(op) | Asr(op)
             | Rol(op) | Ror(op) | Mul(op) | MuluDp(op) | MulsDp(op) | Divu(op) | DivuDp(op)
-            | Divs(op) | DivsDp(op) | Modu(op) | ModuDp(op) | Mods(op) | ModsDp(op) | CmpE(op)
+            | Divs(op) | DivsDp(op) | Modu(op) | ModuDp(op) | Mods(op) | ModsDp(op)
+            | MinSigned(op) | MaxSigned(op) | MinUnsigned(op) | MaxUnsigned(op) | CmpE(op)
             | CmpNe(op) | CmpSlt(op) | CmpUlt(op) | CmpSle(op) | CmpUle(op) | CmpSge(op)
             | CmpUge(op) | CmpSgt(op) | CmpUgt(op) | TestBit(op) | AddOverflow(op) | Fadd(op)
             | Fsub(op) | Fmul(op) | Fdiv(op) | FcmpE(op) | FcmpNe(op) | FcmpLt(op) | FcmpLe(op)
@@ -360,10 +389,13 @@ impl HighLevelILLiftedInstruction {
                 "constant_data",
                 Operand::ConstantData(op.constant_data.clone()),
             )],
-            Deref(op) | AddressOf(op) | Neg(op) | Not(op) | Sx(op) | Zx(op) | LowPart(op)
-            | BoolToInt(op) | UnimplMem(op) | Fsqrt(op) | Fneg(op) | Fabs(op) | FloatToInt(op)
-            | IntToFloat(op) | FloatConv(op) | RoundToInt(op) | Floor(op) | Ceil(op)
-            | Ftrunc(op) => vec![("src", Operand::Expr(*op.src.clone()))],
+            Deref(op) | AddressOf(op) | PassByRef(op) | ReturnByRef(op) | Neg(op) | Not(op)
+            | Bswap(op) | Popcnt(op) | Clz(op) | Ctz(op) | Rbit(op) | Cls(op) | Abs(op)
+            | Sx(op) | Zx(op) | LowPart(op) | BoolToInt(op) | UnimplMem(op) | Fsqrt(op)
+            | Fneg(op) | Fabs(op) | FloatToInt(op) | IntToFloat(op) | FloatConv(op)
+            | RoundToInt(op) | Floor(op) | Ceil(op) | Ftrunc(op) => {
+                vec![("src", Operand::Expr(*op.src.clone()))]
+            }
             DerefFieldSsa(op) => vec![
                 ("src", Operand::Expr(*op.src.clone())),
                 ("src_memory", Operand::Int(op.src_memory)),
@@ -449,6 +481,10 @@ impl HighLevelILLiftedInstruction {
                 ("src", Operand::VarSsaList(op.src.clone())),
             ],
             VarSsa(op) => vec![("var", Operand::VarSsa(op.var))],
+            VarSsaPartial(op) => vec![
+                ("dest", Operand::VarSsa(op.dest)),
+                ("prev", Operand::VarSsa(op.prev)),
+            ],
             While(op) | DoWhile(op) => vec![
                 ("condition", Operand::Expr(*op.condition.clone())),
                 ("body", Operand::Expr(*op.body.clone())),

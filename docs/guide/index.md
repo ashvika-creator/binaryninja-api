@@ -1,6 +1,7 @@
 # User Guide
 
 Welcome to the Binary Ninja User Guide! You'll notice two menus here. On the right is the table of contents for this main page of the user manual. On the left are links to larger topics that have their own pages, including:
+Welcome to the Binary Ninja User Guide! You'll notice two menus here. On the right is the table of contents for this main page of the user manual. On the left are links to larger topics that have their own pages, including:
 
 ## Directories
 
@@ -41,7 +42,9 @@ The following files and folders may be created in the user folder but are not cr
 
 - `keybindings.json`: Custom key bindings (see [key bindings](#custom-hotkeys))
 - `startup.py`: Default Python commands run once the UI is loaded in the context of the scripting console
+- `startup.py`: Default Python commands run once the UI is loaded in the context of the scripting console
 - `signatures/`: Any user-created signatures can be stored in platform-specific sub-folders in this location
+- `pythonVER/`: Any pip dependencies from plugin manager plugins are installed to the appropriate Python version subfolder such as `python310`, or `python311`
 - `pythonVER/`: Any pip dependencies from plugin manager plugins are installed to the appropriate Python version subfolder such as `python310`, or `python311`
 - `symbols/`: Used to store automatically downloaded PDBs
 - `update/`: Used to store update caches for pending updates
@@ -233,6 +236,7 @@ Recent files can be opened on double click. They can also be navigated using the
 The Recent files list can be cleared via using the Command Palette (`[CTRL] + P`) action `Clear All Recent Files`.
 
 Hotkeys (macOS: `[CMD] + 0` - `[CMD] + 9`, Windows/Linux: `[CTRL] + 0` - `[CTRL] + 9`) can also be used to quickly open a file. The hotkey for a given entry will be shown on the right.
+Hotkeys (macOS: `[CMD] + 0` - `[CMD] + 9`, Windows/Linux: `[CTRL] + 0` - `[CTRL] + 9`) can also be used to quickly open a file. The hotkey for a given entry will be shown on the right.
 
 ### Plugins
 
@@ -313,7 +317,9 @@ Switching views happens multiple ways. In some instances, it is automatic, such 
 ![the sidebar ><](../img/sidebars.png "The Sidebar"){ width = "800" }
 
 Once you have a file open, the sidebar lets you quickly access the most common features as sidebar panels and keeps them available while you work. These panels can be moved to the upper-left (1), upper-right (2), lower-left (3), lower-right (4), bottom-left (5), and bottom-right (6) panel regions.
+Once you have a file open, the sidebar lets you quickly access the most common features as sidebar panels and keeps them available while you work. These panels can be moved to the upper-left (1), upper-right (2), lower-left (3), lower-right (4), bottom-left (5), and bottom-right (6) panel regions.
 
+ - 1-2: This section is where the majority of the primarily vertical panels reside. You can only have one larger item here at a time visible. The default behavior is for a click on another panel icon to hide the previous panel. However, this default can be overridden by using `[SHIFT]` click. If overridden, both the old panel and the new panel will be visible.
  - 1-2: This section is where the majority of the primarily vertical panels reside. You can only have one larger item here at a time visible. The default behavior is for a click on another panel icon to hide the previous panel. However, this default can be overridden by using `[SHIFT]` click. If overridden, both the old panel and the new panel will be visible.
  - 3-4: This section is primarily for smaller panels where you may wish to toggle multiple on or off. Clicking a panel here will toggle its visibility without impacting other panels. Note that despite 4 not having any items in it by default, when you drag a panel icon to this region, you'll see the separator that separates 1/2 from 3/4 appear.
  - 5-6: Primarily for horizontal content, the bottom-most panel icon regions behave much like sections 1-2 except they are applied to two regions in the bottom of the window. Clicking a different icon in this region will switch to that panel, or hide that panel entirely if it is already selected.
@@ -343,6 +349,7 @@ The Symbol List shows the following columns by default:
 
 Additionally, the following columns are hidden by default and can be enabled by right-clicking the header:
 
+- `Total Bytes`: in the case of functions, the sum of size of basic blocks
 - `Total Bytes`: in the case of functions, the sum of size of basic blocks
 
 These columns can be re-arranged, hidden, and used for sorting.
@@ -488,6 +495,7 @@ The following are only available when the cross-references pane is in focus:
 The Console panel by default only contains a single Python scripting console, however it is possible to create additional consoles using the `Create Python Console` command palette item.
 
 For many more details about using the Python console, see below in the [Python console documentation](#script-python-console).
+For many more details about using the Python console, see below in the [Python console documentation](#script-python-console).
 
 ### Variables
 
@@ -536,6 +544,7 @@ The search types are available from a drop-down next to the text input field and
 
  - Advanced Binary Search: A new search type using the [bv.search](https://api.binary.ninja/binaryninja.binaryview-module.html#binaryninja.binaryview.BinaryView.search) syntax (supporting regular expressions and wildcard hex strings)
  - Escaped: Escaped strings such as `OneString\x09\Tabsx09Another`
+ - Hex: All values must be valid hex characters such as `ebfffc390` and the bytes will only be searched for in this particular order
  - Hex: All values must be valid hex characters such as `ebfffc390` and the bytes will only be searched for in this particular order
  - Raw: A simple string search that matches the exact string as specified
  - Text: Searches the decompilation or whatever view is currently selected for disassembly, BNIL, or Pseudo C
@@ -730,8 +739,10 @@ files for triage (`File/Open for Triage`) so a high level overview can be viewed
 full analysis. If a file is opened in this way, a button at the bottom appears titled, "Start Full Analysis".
 
 Triage Summary was originally a [Python
+Triage Summary was originally a [Python
 plugin](https://github.com/Vector35/binaryninja-api/tree/dev/python/examples/triage) implemented as a proof-of-concept
 for extending the UI. The functionality was so useful it was re-written in C++ and integrated into the official UI,
+however the Python plugin contains a feature that the C++ one does not: the ability to resolve some dynamic imports. To
 however the Python plugin contains a feature that the C++ one does not: the ability to resolve some dynamic imports. To
 use this version, copy the folder linked above into your [plugins folder](#user-folder) and disable the built-in C++ UI
 using the [`corePlugins.triage`](settings.md#corePlugins.triage) setting.
@@ -745,12 +756,14 @@ entropy map to navigate to that location in your default view.
 ### 2. File Info
 
 The file info section contains some summary information for the file, each result can be clicked to copy
+The file info section contains some summary information for the file, each result can be clicked to copy
 it into your clipboard.
 
 ### 3. Headers
 
 This section appears only in `BinaryView`s and the exact information depends on the view itself. PE headers
 are the most detailed and include such items as checksums, characteristics, and compiler strings. Addresses that
+exist in the virtual memory space of the file can be clicked to navigate to that location.
 exist in the virtual memory space of the file can be clicked to navigate to that location.
 
 ### 4. Base Address Detection (BASE)
@@ -763,6 +776,7 @@ summary when the file doesn't specify a load address such as a raw or mapped fil
 switching the view in the upper-left from the `BinaryView` name to `raw` will force the BASE UI to show up in the
 Triage Summary.
 
+See our [blog
 See our [blog
 post](https://binary.ninja/2024/05/21/automatically-identifying-base-addresses.html) for more information on how
 BASE works. The following settings describe the advanced settings and how they influence the process.
@@ -856,6 +870,7 @@ This section contains a list of conditionally-shown tags offering information ab
     - **Analysis was skipped (too many updates)**: Analysis was skipped for this function because it caused too many updates ([`analysis.limits.maxFunctionUpdateCount`](settings.md#analysis.limits.maxFunctionUpdateCount))
     - **Analysis suppressed**: Analysis was suppressed for this function because analysis of auto-discovered functions was disabled ([`analysis.suppressNewAutoFunctionAnalysis`](settings.md#analysis.suppressNewAutoFunctionAnalysis))
     - **Basic analysis only**: This function only received basic analysis ([`analysis.mode`](settings.md#analysis.mode) was 'basic')
+    - **Basic analysis only**: This function only received basic analysis ([`analysis.mode`](settings.md#analysis.mode) was 'basic')
     - **Intermediate analysis only**: This function only received intermediate analysis ([`analysis.mode`](settings.md#analysis.mode) was 'intermediate')
     - **Unresolved stack usage**: The function has unresolved stack usage
     - **GP = 0xABCD1234**: The global pointer value is 0xABCD1234
@@ -883,18 +898,27 @@ Pure functions are assumed to have no side effects and may be inlined if their r
 ### 8. Inline During Analysis
 
 When Inline During Analysis is checked, it causes the function to be [inlined](https://api.binary.ninja/binaryninja.function-module.html#binaryninja.function.Function.inline_during_analysis) during analysis. The three options control whether instruction addresses are preserved per function or per call site.
+When Inline During Analysis is checked, it causes the function to be [inlined](https://api.binary.ninja/binaryninja.function-module.html#binaryninja.function.Function.inline_during_analysis) during analysis. The options control whether instruction addresses are preserved per function or per call site.
 
+### 9. Signature Table
 ### 9. Signature Table
 
 This section contains the function's return value and parameters as an editable table with columns for index, type, name, source, and location.
+This section contains the function's return value and parameters as an editable table with columns for index, type, name, source, and location.
 
+### 10. Clobbered Registers
 ### 10. Clobbered Registers
 
 This section contains the list of registers that this function clobbers; individual registers can be checked or unchecked.
+This section contains the list of registers that this function clobbers; individual registers can be checked or unchecked.
 
-### 11. Register Stack Adjustments
+### 11. Register Stacks
 
 This element is a table containing a row for each register stack (e.g. x87) in the architecture, with the ability to adjust how many registers are removed from each stack when the function returns.
+
+### 12. Function Workflow
+
+This dropdown selects the [function-level workflow](https://docs.binary.ninja/dev/workflows.html#workflow) which is used to analyze this function.
 
 ### 12. Function Workflow
 
@@ -1043,6 +1067,7 @@ To trigger the console, either use `<BACKTICK>`, or use the `View`/`Python Conso
 When both the Script Console and the Log view are open, the title of both acts as a tab that can be dragged to either a tabbed view showing only one at a time (the default) or a split view showing both. Currently, the console and log views are part of a "Global Area", meaning they are always visible in the same position when switching between open binary tabs in the same window. This means they can only dock with each other, and not with the sidebar or the main pane view area. It is possible to open additional scripting consoles via the `Create Python Console` action in the [command palette](#command-palette), and these new consoles will appear as additional tabs in the topmost, leftmost tab in the global area. Note that `<BACKTICK>` will always focus the original main scripting console, and while any of the other created consoles can be closed (using the button that will appear when hovering over the right edge of its tab), the original one cannot be closed.
 
 Multi-line input is possible just by doing what you'd normally do in Python. If you leave a trailing `:` at the end of a line, the box will automatically turn into a multi-line edit box, complete with a command-history. To submit that multi-line input, use `<CTRL>-<ENTER>`. You can also force multi-line input with `<SHIFT>-<ENTER>`.
+Multi-line input is possible just by doing what you'd normally do in Python. If you leave a trailing `:` at the end of a line, the box will automatically turn into a multi-line edit box, complete with a command-history. To submit that multi-line input, use `<CTRL>-<ENTER>`. You can also force multi-line input with `<SHIFT>-<ENTER>`.
 
 The scripting console is not a full IDE, but it has several convenience features that make it more pleasant to use:
 
@@ -1052,13 +1077,16 @@ The scripting console is not a full IDE, but it has several convenience features
 
 ???+ Tip "Tip"
     All scripting consoles share a single Python instance. This is an intentional design choice and has the following benefits: you can create variables in one tab/window and then access it in another. The downside is that if you run a long-running script for example, the console will still be blocked in other tabs and windows. This is a known trade-off and not expected to change.
+    All scripting consoles share a single Python instance. This is an intentional design choice and has the following benefits: you can create variables in one tab/window and then access it in another. The downside is that if you run a long-running script for example, the console will still be blocked in other tabs and windows. This is a known trade-off and not expected to change.
 
 ### Magic Console Variables
 
 The interactive Python prompt also has several built-in "magic" functions and variables. Some are read-only, and some are writable to provide convenient interactivity between the UI and console:
+The interactive Python prompt also has several built-in "magic" functions and variables. Some are read-only, and some are writable to provide convenient interactivity between the UI and console:
 
 - `here` / `current_address`: address of the current selection. It's settable too and will navigate the UI if changed
 - `current_selection`: a tuple of the start and end addresses of the current selection. It's settable and will change the current selection
+- `current_raw_offset`: the file offset that corresponds to the current address. It's settable and will navigate to the corresponding file offset
 - `current_raw_offset`: the file offset that corresponds to the current address. It's settable and will navigate to the corresponding file offset
 - `bv` / `current_view` / : the current [`BinaryView`](https://api.binary.ninja/binaryninja.binaryview-module.html#binaryninja.binaryview.BinaryView)
 - `current_function`: the current [`Function`](https://api.binary.ninja/binaryninja.function-module.html#binaryninja.function.Function)
@@ -1090,9 +1118,14 @@ The interactive Python prompt also has several built-in "magic" functions and va
 ### startup.py
 
 The Python interpreter can be customized to run scripts on startup using `startup.py` in your user folder. Simply enter commands into that file, and they will be executed every time Binary Ninja starts. By default, it comes with an import helper:
+The Python interpreter can be customized to run scripts on startup using `startup.py` in your user folder. Simply enter commands into that file, and they will be executed every time Binary Ninja starts. By default, it comes with an import helper:
 
     # Commands in this file will be run in the interactive Python console on startup
     from binaryninja import *
+```python
+# Commands in this file will be run in the interactive python console on startup
+from binaryninja import *
+```
 
 From here, you can add any custom functions or objects you want to be available in the console. If you want to restore the original copy of `startup.py` at any time, simply delete the file and restart Binary Ninja. A fresh copy of the above will be generated.
 
@@ -1101,6 +1134,7 @@ From here, you can add any custom functions or objects you want to be available 
 ???+ Danger "Warning"
     When you run commands in the scripting console, the UI will automatically update analysis. This is because quite often when you make a change in the console you expect it to be immediately reflected in the UI. The same is not true when running a script where you must trigger `bv.update_analysis_and_wait()` or `current_function.reanalyze()` to experience the same behavior.
 
+The "Run Script..." option in the File Menu allows loading a Python script from your filesystem and executing it
 The "Run Script..." option in the File Menu allows loading a Python script from your filesystem and executing it
 within the console. It can also be run via the Command Palette or bound to a key.
 
@@ -1125,6 +1159,7 @@ Plugins can be installed by one of two methods. First, they can be installed via
 
 ![plugin manager](../img/plugin-manager.png "Plugin Manager"){ width="1000" }
 
+Second, they can be manually installed by adding the plugin (either a `.py` file or a folder implementing a Python module with a `__init__.py` file) to the appropriate path:
 Second, they can be manually installed by adding the plugin (either a `.py` file or a folder implementing a Python module with a `__init__.py` file) to the appropriate path:
 
 - macOS: `~/Library/Application Support/Binary Ninja/plugins/`

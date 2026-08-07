@@ -14,10 +14,19 @@ class SharedCacheView : public BinaryNinja::BinaryView
 
 	// Restored primary file name from metadata, or the file name on first open.
 	std::string m_primaryFileName;
+	// Project-relative path when the database is in a project, otherwise relative to the database directory.
+	std::string m_primaryFilePath;
 
 	// Restored associated file names from metadata, this is all the associated cache entries.
 	// NOTE: Currently this is just used to alert the user to supposed missing files.
 	std::set<std::string> m_secondaryFileNames;
+
+	std::string StorePrimaryProjectFile(BinaryNinja::ProjectFile* projectFile);
+	void StorePrimaryFilePath(const std::string& path, BinaryNinja::Project* project, const std::string& databaseDir);
+	std::optional<std::string> ResolveProjectFilePath(BinaryNinja::Project* project, const std::string& projectPath);
+	std::optional<std::string> ResolveUniqueProjectFileName(BinaryNinja::Project* project);
+	std::optional<std::string> ResolveMetadataPrimaryFilePath(BinaryNinja::Project* project, const std::string& databaseDir);
+	std::optional<std::string> PromptForPrimaryFile();
 
 public:
 	SharedCacheView(const std::string& typeName, BinaryView* data, bool parseOnly = false);
@@ -31,6 +40,7 @@ public:
 	bool InitController();
 
 	void SetPrimaryFileName(std::string primaryFileName);
+	void SetPrimaryFileLocation(std::string primaryFilePath, std::string primaryFileName);
 
 	// Logs the secondary file name to `m_secondaryFileNames`, see the note on the field about usage.
 	void LogSecondaryFileName(std::string associatedFileName);

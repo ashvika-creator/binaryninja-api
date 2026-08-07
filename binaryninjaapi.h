@@ -3809,9 +3809,21 @@ namespace BinaryNinja {
 		*/
 		void SetFilename(const std::string& name);
 
-		/*! Get the path to the container file if the current file is inside a container (e.g. ZIP, TAR, etc.)
+		/*! Get the transform-chain identity for this file in the current session There are three meaningful states:
 
-			\return The path to the container file if the current file is inside a container, otherwise an empty string
+			* Empty - not yet processed by the transform system.
+			* Equal to GetFilename() - processed, no transform chain applied (plain file,
+			  database, or container system disabled via ``files.container.mode``).
+			* Non-empty and different from GetFilename() - derived container entry.
+
+			Session-scoped: save-as does not persist the chain. Reopening the saved artifact
+			yields whatever chain that session's access path produces.
+
+			Use this for cache keys, identity-sensitive operations, or testing whether a file
+			has been processed. Use GetFilename() for the physical path, GetDisplayName() for
+			UI display.
+
+			\return The transform chain, or empty string if not yet processed.
 		*/
 		std::string GetVirtualPath() const;
 
@@ -3821,10 +3833,30 @@ namespace BinaryNinja {
 		*/
 		void SetVirtualPath(const std::string& path);
 
-		/*! Get the display name for the file. For container entries, this returns the synthesized name
-			representing the extracted artifact. For normal files, this returns the filename.
+		/*! True if this file was produced by the container transform system (e.g. an entry
+			extracted from a Zip). False for plain files, databases, and FileMetadata that
+			has not yet been processed by the transform system (virtual_path empty).
 
-			\return The display name for UI purposes (tab titles, save dialogs, etc.)
+			\return Whether this FileMetadata represents a derived container entry.
+		*/
+		bool IsContainerEntry() const
+		{
+			std::string virtualPath = GetVirtualPath();
+			return !virtualPath.empty() && GetFilename() != virtualPath;
+		}
+
+		/*! A leaf-shaped human-readable name for UI presentation. Never contains a directory
+			path. Resolution order:
+
+			* An explicitly set display name (project-assigned, transform-synthesized for
+			  container entries, or set by a plugin or user).
+			* Otherwise the leaf of GetFilename().
+
+			Use this for tab titles, save-dialog default leaf names, logs, and any UI surface
+			where you'd refer to the file by name. Use GetFilename() for the physical path that
+			can be reopened.
+
+			\return The display name for UI purposes.
 		*/
 		std::string GetDisplayName() const;
 
@@ -5488,6 +5520,8 @@ namespace BinaryNinja {
 	class TypeArchive;
 	class MemoryMap;
 	struct HighLevelILInstruction;
+	struct FunctionParameter;
+	struct ReturnValue;
 
 	class QueryMetadataException : public ExceptionWithStackTrace
 	{
@@ -8215,12 +8249,25 @@ namespace BinaryNinja {
 		Ref<ExternalLocation> GetExternalLocation(Ref<Symbol> sourceSymbol);
 		std::vector<Ref<ExternalLocation>> GetExternalLocations();
 
+		/*! \deprecated Use GetGlobalPointerValues instead. */
 		Confidence<RegisterValue> GetGlobalPointerValue() const;
+		std::vector<std::pair<uint32_t, Confidence<RegisterValue>>> GetGlobalPointerValues() const;
+		std::vector<std::pair<uint32_t, Confidence<RegisterValue>>> GetDefaultGlobalPointerValues() const;
+		std::vector<std::pair<uint32_t, Confidence<RegisterValue>>> GetUserGlobalPointerValues() const;
+		/*! \deprecated Use UserGlobalPointerValuesSet instead. */
 		bool UserGlobalPointerValueSet() const;
+		bool UserGlobalPointerValuesSet() const;
+		/*! \deprecated Use ClearUserGlobalPointerValues instead. */
 		void ClearUserGlobalPointerValue();
+		void ClearUserGlobalPointerValues();
+		/*! \deprecated Use SetUserGlobalPointerValues instead. */
 		void SetUserGlobalPointerValue(const Confidence<RegisterValue>& value);
+		void SetUserGlobalPointerValues(const std::vector<std::pair<uint32_t, Confidence<RegisterValue>>>& values);
 
 		std::optional<std::pair<std::string, BNStringType>> StringifyUnicodeData(Architecture* arch, const DataBuffer& buffer, bool nullTerminates = true, bool allowShortStrings = false);
+
+		std::vector<FunctionParameter> DerefParameterNamedTypeRefs(const std::vector<FunctionParameter>& params);
+		ReturnValue DerefReturnValueNamedTypeRefs(const ReturnValue& returnValue);
 	};
 
 	/*! MemoryMap provides access to the system-level memory map describing how a BinaryView is loaded into memory.
@@ -10559,6 +10606,10 @@ namespace BinaryNinja {
 
 		uint64_t ToIdentifier() const;
 		static Variable FromIdentifier(uint64_t id);
+
+		static Variable Register(uint32_t reg);
+		static Variable Flag(uint32_t flag);
+		static Variable StackOffset(int64_t offset);
 	};
 
 	struct VariableReferenceSource
@@ -10567,21 +10618,105 @@ namespace BinaryNinja {
 		ILReferenceSource source;
 	};
 
+	struct ValueLocationComponent
+	{
+		Variable variable;
+		int64_t offset = 0;
+		std::optional<uint64_t> size;
+
+		ValueLocationComponent() = default;
+		ValueLocationComponent(Variable var, int64_t ofs = 0, std::optional<uint64_t> sz = std::nullopt) :
+			variable(var), offset(ofs), size(sz)
+		{}
+
+		ValueLocationComponent RemapVariables(const std::function<Variable(Variable)>& remap) const;
+
+		bool operator==(const ValueLocationComponent& component) const;
+		bool operator!=(const ValueLocationComponent& component) const;
+
+		static ValueLocationComponent FromAPIObject(const BNValueLocationComponent* loc);
+		BNValueLocationComponent ToAPIObject() const;
+
+		std::string ToString(Architecture* arch) const;
+	};
+
+	struct ValueLocation
+	{
+		std::vector<ValueLocationComponent> components;
+		bool indirect = false;
+		std::optional<Variable> returnedPointer;
+
+		ValueLocation() {}
+		ValueLocation(Variable var, bool indir = false, std::optional<Variable> retPtr = std::nullopt) :
+			components {var}, indirect(indir), returnedPointer(retPtr)
+		{}
+		ValueLocation(const std::vector<ValueLocationComponent>& components, bool indir = false,
+			std::optional<Variable> retPtr = std::nullopt) :
+			components(components), indirect(indir), returnedPointer(retPtr)
+		{}
+		ValueLocation(std::vector<ValueLocationComponent>&& components, bool indir = false,
+			std::optional<Variable> retPtr = std::nullopt) :
+			components(std::move(components)), indirect(indir), returnedPointer(retPtr)
+		{}
+
+		std::optional<Variable> GetVariableForReturnValue() const;
+		std::optional<Variable> GetVariableForParameter(size_t idx) const;
+		ValueLocation RemapVariables(const std::function<Variable(Variable)>& remap) const;
+		void ForEachVariable(const std::function<void(Variable var, bool indirect)>& func) const;
+		bool ContainsVariable(Variable var) const;
+		bool IsValid() const { return !components.empty(); }
+
+		bool operator==(const ValueLocation& loc) const;
+		bool operator!=(const ValueLocation& loc) const;
+
+		static ValueLocation FromAPIObject(const BNValueLocation* loc);
+		BNValueLocation ToAPIObject() const;
+		static void FreeAPIObject(BNValueLocation* loc);
+
+		static std::optional<ValueLocation> Parse(const std::string& str, Architecture* arch, std::string& error);
+		std::string ToString(Architecture* arch) const;
+	};
+
 	struct FunctionParameter
 	{
 		std::string name;
 		Confidence<Ref<Type>> type;
-		bool defaultLocation;
-		Variable location;
+		BNValueLocationSource locationSource;
+		ValueLocation location;
 
 		FunctionParameter() = default;
-		FunctionParameter(const std::string& name, Confidence<Ref<Type>> type): name(name), type(type), defaultLocation(true)
+		FunctionParameter(const std::string& name, Confidence<Ref<Type>> type): name(name), type(type), locationSource(DefaultLocationSource)
 		{}
 
-		FunctionParameter(const std::string& name, const Confidence<Ref<Type>>& type, bool defaultLocation,
-		    const Variable& location):
-		    name(name), type(type), defaultLocation(defaultLocation), location(location)
+		FunctionParameter(const std::string& name, const Confidence<Ref<Type>>& type, BNValueLocationSource source,
+		    const ValueLocation& location) :
+		    name(name), type(type), locationSource(source), location(location)
 		{}
+
+		static FunctionParameter FromAPIObject(const BNFunctionParameter* param);
+		BNFunctionParameter ToAPIObject() const;
+		static void FreeAPIObject(BNFunctionParameter* param);
+	};
+
+	struct ReturnValue
+	{
+		Confidence<Ref<Type>> type;
+		bool defaultLocation = true;
+		Confidence<ValueLocation> location;
+
+		ReturnValue(Type* ty) : type(ty) {}
+		ReturnValue(Ref<Type> ty) : type(ty) {}
+		ReturnValue(const Confidence<Ref<Type>>& ty) : type(ty) {}
+		ReturnValue(const Confidence<Ref<Type>>& ty, bool defaultLoc, const Confidence<ValueLocation>& loc) :
+			type(ty), defaultLocation(defaultLoc), location(loc) {};
+		ReturnValue() = default;
+
+		bool operator==(const ReturnValue& nt) const;
+		bool operator!=(const ReturnValue& nt) const;
+
+		static ReturnValue FromAPIObject(const BNReturnValue* returnValue);
+		BNReturnValue ToAPIObject() const;
+		static void FreeAPIObject(BNReturnValue* returnValue);
 	};
 
 	class FieldResolutionInfo : public CoreRefCountObject<BNFieldResolutionInfo, BNNewFieldResolutionInfoReference, BNFreeFieldResolutionInfo>
@@ -10730,6 +10865,22 @@ namespace BinaryNinja {
 		    \return The child type
 		*/
 		Confidence<Ref<Type>> GetChildType() const;
+
+		/*! Get the return value type and location for this Type if one exists
+
+		    \return The return value type and location
+		*/
+		ReturnValue GetReturnValue() const;
+
+		/*! Whether the return value is in the default location
+		 */
+		bool IsReturnValueDefaultLocation() const;
+
+		/*! Get the return value location for this Type
+
+		    \return The return value location
+		*/
+		Confidence<ValueLocation> GetReturnValueLocation() const;
 
 		/*! For Function Types, get the calling convention
 
@@ -10980,14 +11131,14 @@ namespace BinaryNinja {
 		    auto functionType = Type::FunctionType(retType, cc, params);
 		    \endcode
 
-			\param returnValue Return value Type
+			\param returnValue Return value type and location
 			\param callingConvention Calling convention for the function
 			\param params list of FunctionParameter s
 			\param varArg Whether this function has variadic arguments, default false
 			\param stackAdjust Stack adjustment for this function, default 0
 			\return The created function types
 		*/
-		static Ref<Type> FunctionType(const Confidence<Ref<Type>>& returnValue,
+		static Ref<Type> FunctionType(const ReturnValue& returnValue,
 		    const Confidence<Ref<CallingConvention>>& callingConvention, const std::vector<FunctionParameter>& params,
 		    const Confidence<bool>& varArg = Confidence<bool>(false, 0),
 		    const Confidence<int64_t>& stackAdjust = Confidence<int64_t>(0, 0));
@@ -11008,23 +11159,21 @@ namespace BinaryNinja {
 		    auto functionType = Type::FunctionType(retType, cc, params);
 		    \endcode
 
-			\param returnValue Return value Type
+			\param returnValue Return value type and location
 			\param callingConvention Calling convention for the function
 			\param params list of FunctionParameters
 			\param varArg Whether this function has variadic arguments, default false
 			\param stackAdjust Stack adjustment for this function, default 0
-		 	\param regStackAdjust Register stack adjustmemt
-		 	\param returnRegs Return registers
+			\param regStackAdjust Register stack adjustmemt
 			\return The created function types
 		*/
-		static Ref<Type> FunctionType(const Confidence<Ref<Type>>& returnValue,
+		static Ref<Type> FunctionType(const ReturnValue& returnValue,
 		    const Confidence<Ref<CallingConvention>>& callingConvention,
 		    const std::vector<FunctionParameter>& params,
 		    const Confidence<bool>& hasVariableArguments,
 		    const Confidence<bool>& canReturn,
 		    const Confidence<int64_t>& stackAdjust,
 		    const std::map<uint32_t, Confidence<int32_t>>& regStackAdjust = std::map<uint32_t, Confidence<int32_t>>(),
-		    const Confidence<std::vector<uint32_t>>& returnRegs = Confidence<std::vector<uint32_t>>(std::vector<uint32_t>(), 0),
 		    BNNameType ft = NoNameType,
 		    const Confidence<bool>& pure = Confidence<bool>(false, 0));
 		static Ref<Type> VarArgsType();
@@ -11217,9 +11366,13 @@ namespace BinaryNinja {
 		Confidence<bool> IsConst() const;
 		Confidence<bool> IsVolatile() const;
 		bool IsSystemCall() const;
+		BNIntegerDisplayType GetIntegerTypeDisplayType() const;
 		void SetIntegerTypeDisplayType(BNIntegerDisplayType displayType);
 
 		Confidence<Ref<Type>> GetChildType() const;
+		ReturnValue GetReturnValue() const;
+		bool IsReturnValueDefaultLocation() const;
+		Confidence<ValueLocation> GetReturnValueLocation() const;
 		Confidence<Ref<CallingConvention>> GetCallingConvention() const;
 		BNCallingConventionName GetCallingConventionName() const;
 		std::vector<FunctionParameter> GetParameters() const;
@@ -11239,6 +11392,9 @@ namespace BinaryNinja {
 		TypeBuilder& SetConst(const Confidence<bool>& cnst);
 		TypeBuilder& SetVolatile(const Confidence<bool>& vltl);
 		TypeBuilder& SetChildType(const Confidence<Ref<Type>>& child);
+		TypeBuilder& SetReturnValue(const ReturnValue& rv);
+		TypeBuilder& SetIsReturnValueDefaultLocation(bool defaultLocation);
+		TypeBuilder& SetReturnValueLocation(const Confidence<ValueLocation>& location);
 		TypeBuilder& SetCallingConvention(const Confidence<Ref<CallingConvention>>& cc);
 		TypeBuilder& SetCallingConventionName(BNCallingConventionName cc);
 		TypeBuilder& SetSigned(const Confidence<bool>& vltl);
@@ -11334,18 +11490,17 @@ namespace BinaryNinja {
 			uint64_t originalFragmentOffsetBytes, size_t originalFragmentWidthBytes, BNEndianness endianness,
 			size_t fragmentStartBit, size_t fragmentWidthBits, size_t fragmentTruncatedStartBits, size_t wrapBit = 0);
 		static TypeBuilder ArrayType(const Confidence<Ref<Type>>& type, uint64_t elem);
-		static TypeBuilder FunctionType(const Confidence<Ref<Type>>& returnValue,
+		static TypeBuilder FunctionType(const ReturnValue& returnValue,
 		    const Confidence<Ref<CallingConvention>>& callingConvention, const std::vector<FunctionParameter>& params,
 		    const Confidence<bool>& varArg = Confidence<bool>(false, 0),
 		    const Confidence<int64_t>& stackAdjust = Confidence<int64_t>(0, 0));
-		static TypeBuilder FunctionType(const Confidence<Ref<Type>>& returnValue,
+		static TypeBuilder FunctionType(const ReturnValue& returnValue,
 		    const Confidence<Ref<CallingConvention>>& callingConvention,
 		    const std::vector<FunctionParameter>& params,
 		    const Confidence<bool>& hasVariableArguments,
 		    const Confidence<bool>& canReturn,
 		    const Confidence<int64_t>& stackAdjust,
 		    const std::map<uint32_t, Confidence<int32_t>>& regStackAdjust = std::map<uint32_t, Confidence<int32_t>>(),
-		    const Confidence<std::vector<uint32_t>>& returnRegs = Confidence<std::vector<uint32_t>>(std::vector<uint32_t>(), 0),
 		    BNNameType ft = NoNameType,
 		    const Confidence<bool>& pure = Confidence<bool>(false, 0));
 		static TypeBuilder VarArgsType();
@@ -12036,6 +12191,7 @@ namespace BinaryNinja {
 		Ref<BinaryView> m_view;
 		Ref<Function> m_function;
 
+		std::string PostRawRequest(const char* request);
 		bool PostRequest(const std::string& command);
 
 	public:
@@ -12607,6 +12763,11 @@ namespace BinaryNinja {
 			\return List of automatic annotations for the start of this block
 		*/
 		std::vector<std::vector<InstructionTextToken>> GetAnnotations();
+		/*! Hint for sorting this block in graph layouts
+
+			\return Integer for sorting this block, if defined
+		 */
+		std::optional<int64_t> GetSortHint();
 
 		/*! property which returns a list of DisassemblyTextLine objects for the current basic block.
 
@@ -13237,9 +13398,13 @@ namespace BinaryNinja {
 
 		Ref<Type> GetType() const;
 		Confidence<Ref<Type>> GetReturnType() const;
+		ReturnValue GetReturnValue() const;
+		bool IsReturnValueDefaultLocation() const;
+		Confidence<ValueLocation> GetReturnValueLocation() const;
 		Confidence<std::vector<uint32_t>> GetReturnRegisters() const;
 		Confidence<Ref<CallingConvention>> GetCallingConvention() const;
 		Confidence<std::vector<Variable>> GetParameterVariables() const;
+		Confidence<std::vector<ValueLocation>> GetParameterLocations() const;
 		Confidence<bool> HasVariableArguments() const;
 		Confidence<int64_t> GetStackAdjustment() const;
 		std::map<uint32_t, Confidence<int32_t>> GetRegisterStackAdjustments() const;
@@ -13247,9 +13412,11 @@ namespace BinaryNinja {
 
 		void SetAutoType(Type* type);
 		void SetAutoReturnType(const Confidence<Ref<Type>>& type);
-		void SetAutoReturnRegisters(const Confidence<std::vector<uint32_t>>& returnRegs);
+		void SetAutoReturnValue(const ReturnValue& rv);
+		void SetAutoIsReturnValueDefaultLocation(bool defaultLocation);
+		void SetAutoReturnValueLocation(const Confidence<ValueLocation>& location);
 		void SetAutoCallingConvention(const Confidence<Ref<CallingConvention>>& convention);
-		void SetAutoParameterVariables(const Confidence<std::vector<Variable>>& vars);
+		void SetAutoParameterLocations(const Confidence<std::vector<ValueLocation>>& locations);
 		void SetAutoHasVariableArguments(const Confidence<bool>& varArgs);
 		void SetAutoCanReturn(const Confidence<bool>& returns);
 		void SetAutoPure(const Confidence<bool>& pure);
@@ -13259,9 +13426,11 @@ namespace BinaryNinja {
 
 		void SetUserType(Type* type);
 		void SetReturnType(const Confidence<Ref<Type>>& type);
-		void SetReturnRegisters(const Confidence<std::vector<uint32_t>>& returnRegs);
+		void SetReturnValue(const ReturnValue& rv);
+		void SetIsReturnValueDefaultLocation(bool defaultLocation);
+		void SetReturnValueLocation(const Confidence<ValueLocation>& location);
 		void SetCallingConvention(const Confidence<Ref<CallingConvention>>& convention);
-		void SetParameterVariables(const Confidence<std::vector<Variable>>& vars);
+		void SetParameterLocations(const Confidence<std::vector<ValueLocation>>& locations);
 		void SetHasVariableArguments(const Confidence<bool>& varArgs);
 		void SetCanReturn(const Confidence<bool>& returns);
 		void SetPure(const Confidence<bool>& pure);
@@ -13398,6 +13567,7 @@ namespace BinaryNinja {
 		bool IsCallInstruction(Architecture* arch, uint64_t addr);
 
 		std::vector<std::vector<InstructionTextToken>> GetBlockAnnotations(Architecture* arch, uint64_t addr);
+		std::optional<int64_t> GetBlockSortHint(Architecture* arch, uint64_t addr);
 
 		BNIntegerDisplayType GetIntegerConstantDisplayType(
 		    Architecture* arch, uint64_t instrAddr, uint64_t value, size_t operand);
@@ -13490,7 +13660,9 @@ namespace BinaryNinja {
 
 		std::vector<DisassemblyTextLine> GetTypeTokens(DisassemblySettings* settings = nullptr);
 
+		/*! \deprecated Use GetGlobalPointerValues instead. */
 		Confidence<RegisterValue> GetGlobalPointerValue() const;
+		std::vector<std::pair<uint32_t, Confidence<RegisterValue>>> GetGlobalPointerValues() const;
 		bool UsesIncomingGlobalPointer() const;
 		Confidence<RegisterValue> GetRegisterValueAtExit(uint32_t reg) const;
 
@@ -14834,6 +15006,123 @@ namespace BinaryNinja {
 		*/
 		ExprId Not(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
 
+		/*! Reverse the byte order of expression \c value of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param a The expression to byte swap
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>bswap.<size>{<flags>}(value)</tt>
+		*/
+		ExprId ByteSwap(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Count the number of set bits in expression \c value of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param a The expression to count set bits in
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>popcnt.<size>{<flags>}(value)</tt>
+		*/
+		ExprId PopulationCount(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Count the number of leading zero bits in expression \c value of size \c size potentially setting flags.
+			The result is <tt>8 * size</tt> when \c value is zero.
+
+			\param size The size of the result in bytes
+			\param a The expression to count leading zeros in
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>clz.<size>{<flags>}(value)</tt>
+		*/
+		ExprId CountLeadingZeros(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Count the number of trailing zero bits in expression \c value of size \c size potentially setting flags.
+			The result is <tt>8 * size</tt> when \c value is zero.
+
+			\param size The size of the result in bytes
+			\param a The expression to count trailing zeros in
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>ctz.<size>{<flags>}(value)</tt>
+		*/
+		ExprId CountTrailingZeros(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Reverse the bit order of expression \c value of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param a The expression to bit reverse
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>rbit.<size>{<flags>}(value)</tt>
+		*/
+		ExprId ReverseBits(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Count the number of leading bits that match the sign bit in expression \c value of size \c size,
+			not counting the sign bit itself, potentially setting flags
+
+			\param size The size of the result in bytes
+			\param a The expression to count leading sign bits in
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>cls.<size>{<flags>}(value)</tt>
+		*/
+		ExprId CountLeadingSigns(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Signed minimum of expressions \c left and \c right of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param left The left expression
+			\param right The right expression
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>mins.<size>{<flags>}(left, right)</tt>
+		*/
+		ExprId MinSigned(size_t size, ExprId left, ExprId right, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Signed maximum of expressions \c left and \c right of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param left The left expression
+			\param right The right expression
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>maxs.<size>{<flags>}(left, right)</tt>
+		*/
+		ExprId MaxSigned(size_t size, ExprId left, ExprId right, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Unsigned minimum of expressions \c left and \c right of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param left The left expression
+			\param right The right expression
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>minu.<size>{<flags>}(left, right)</tt>
+		*/
+		ExprId MinUnsigned(size_t size, ExprId left, ExprId right, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Unsigned maximum of expressions \c left and \c right of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param left The left expression
+			\param right The right expression
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>maxu.<size>{<flags>}(left, right)</tt>
+		*/
+		ExprId MaxUnsigned(size_t size, ExprId left, ExprId right, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
+		/*! Signed absolute value of expression \c value of size \c size potentially setting flags
+
+			\param size The size of the result in bytes
+			\param a The expression to take the absolute value of
+			\param flags Flags to set
+			\param loc Optional IL Location this expression was added from.
+			\return The expression <tt>abs.<size>{<flags>}(value)</tt>
+		*/
+		ExprId AbsoluteValue(size_t size, ExprId a, uint32_t flags = 0, const ILSourceLocation& loc = ILSourceLocation());
+
 		/*! Two's complement sign-extends the expression in \c value to \c size bytes
 
 			\param size The size of the result in bytes
@@ -15623,8 +15912,10 @@ namespace BinaryNinja {
 		ExprId SetVarAliasedField(size_t size, const Variable& dest, size_t newMemVersion, size_t prevMemVersion,
 		    uint64_t offset, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 
-		ExprId ForceVer(size_t size, const Variable& dest, const Variable& src, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId ForceVerSSA(size_t size, const SSAVariable& dest, const SSAVariable& src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ForceVer(size_t size, const Variable& dest, const Variable& src, BNForceVersionReason reason,
+			const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ForceVerSSA(size_t size, const SSAVariable& dest, const SSAVariable& src, BNForceVersionReason raeson,
+			const ILSourceLocation& loc = ILSourceLocation());
 
 		ExprId Assert(size_t size, const Variable& src, const PossibleValueSet& pvs, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId AssertSSA(size_t size, const SSAVariable& src, const PossibleValueSet& pvs, const ILSourceLocation& loc = ILSourceLocation());
@@ -15655,8 +15946,17 @@ namespace BinaryNinja {
 		    const ILSourceLocation& loc = ILSourceLocation());
 		ExprId VarSplitSSA(size_t size, const SSAVariable& high, const SSAVariable& low,
 		    const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutputSSA(size_t size, const SSAVariable& dest, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutputSSAField(size_t size, const Variable& dest, size_t newVersion, size_t prevVersion,
+			uint64_t offset, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutputAliased(size_t size, const Variable& dest, size_t newMemVersion, size_t prevMemVersion,
+			const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutputAliasedField(size_t size, const Variable& dest, size_t newMemVersion, size_t prevMemVersion,
+			uint64_t offset, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId AddressOf(const Variable& var, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId AddressOfField(const Variable& var, uint64_t offset, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId PassByRef(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ReturnByRef(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Const(size_t size, uint64_t val, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ConstPointer(size_t size, uint64_t val, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ExternPointer(
@@ -15705,6 +16005,17 @@ namespace BinaryNinja {
 		    size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Neg(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Not(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ByteSwap(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId PopulationCount(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountLeadingZeros(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountTrailingZeros(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ReverseBits(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountLeadingSigns(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MinSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MaxSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MinUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MaxUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId AbsoluteValue(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId SignExtend(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ZeroExtend(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId LowPart(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
@@ -15712,35 +16023,39 @@ namespace BinaryNinja {
 		ExprId JumpTo(ExprId dest, const std::map<uint64_t, BNMediumLevelILLabel*>& targets,
 		    const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ReturnHint(ExprId dest, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId Call(const std::vector<Variable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId Call(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 		    const ILSourceLocation& loc = ILSourceLocation());
-		ExprId CallUntyped(const std::vector<Variable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId CallUntyped(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 			ExprId stack, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId Syscall(const std::vector<Variable>& output, const std::vector<ExprId>& params,
+		ExprId Syscall(const std::vector<ExprId>& output, const std::vector<ExprId>& params,
 		    const ILSourceLocation& loc = ILSourceLocation());
-		ExprId SyscallUntyped(const std::vector<Variable>& output, const std::vector<ExprId>& params, ExprId stack,
+		ExprId SyscallUntyped(const std::vector<ExprId>& output, const std::vector<ExprId>& params, ExprId stack,
 			const ILSourceLocation& loc = ILSourceLocation());
-		ExprId TailCall(const std::vector<Variable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId TailCall(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 		    const ILSourceLocation& loc = ILSourceLocation());
-		ExprId TailCallUntyped(const std::vector<Variable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId TailCallUntyped(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 			ExprId stack, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId CallSSA(const std::vector<SSAVariable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId CallSSA(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 		    size_t newMemVersion, size_t prevMemVersion, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId CallUntypedSSA(const std::vector<SSAVariable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId CallUntypedSSA(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 			size_t newMemVersion, size_t prevMemVersion, ExprId stack,
 			const ILSourceLocation& loc = ILSourceLocation());
-		ExprId SyscallSSA(const std::vector<SSAVariable>& output, const std::vector<ExprId>& params,
+		ExprId SyscallSSA(const std::vector<ExprId>& output, const std::vector<ExprId>& params,
 		    size_t newMemVersion, size_t prevMemVersion, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId SyscallUntypedSSA(const std::vector<SSAVariable>& output, const std::vector<ExprId>& params,
+		ExprId SyscallUntypedSSA(const std::vector<ExprId>& output, const std::vector<ExprId>& params,
 			size_t newMemVersion, size_t prevMemVersion, ExprId stack,
 			const ILSourceLocation& loc = ILSourceLocation());
-		ExprId TailCallSSA(const std::vector<SSAVariable>& output, ExprId dest, const std::vector<ExprId>& params,
+		ExprId TailCallSSA(const std::vector<ExprId>& output, ExprId dest, const std::vector<ExprId>& params,
 		    size_t newMemVersion, size_t prevMemVersion, const ILSourceLocation& loc = ILSourceLocation());
-		ExprId TailCallUntypedSSA(const std::vector<SSAVariable>& output, ExprId dest,
+		ExprId TailCallUntypedSSA(const std::vector<ExprId>& output, ExprId dest,
 			const std::vector<ExprId>& params, size_t newMemVersion, size_t prevMemVersion, ExprId stack,
 			const ILSourceLocation& loc = ILSourceLocation());
 		ExprId SeparateParamList(const std::vector<ExprId>& params, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId SharedParamSlot(const std::vector<ExprId>& params, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutput(size_t size, const Variable& var, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarOutputField(size_t size, const Variable& dest, uint64_t offset,
+			const ILSourceLocation& loc = ILSourceLocation());
+		ExprId StoreOutput(size_t size, ExprId dest, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Return(const std::vector<ExprId>& sources, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId NoReturn(const ILSourceLocation& loc = ILSourceLocation());
 		ExprId CompareEqual(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
@@ -15807,6 +16122,7 @@ namespace BinaryNinja {
 		    size_t size, ExprId a, ExprId b, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId FloatCompareOrdered(size_t size, ExprId a, ExprId b, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId FloatCompareUnordered(size_t size, ExprId a, ExprId b, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId BlockToExpand(const std::vector<ExprId>& sources, const ILSourceLocation& loc = ILSourceLocation());
 
 		ExprId Goto(BNMediumLevelILLabel& label, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId If(ExprId operand, BNMediumLevelILLabel& t, BNMediumLevelILLabel& f,
@@ -16033,6 +16349,8 @@ namespace BinaryNinja {
 
 		ExprId Var(size_t size, const Variable& src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId VarSSA(size_t size, const SSAVariable& src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId VarSSAPartial(size_t size, const Variable& dest, size_t newVersion, size_t prevVersion,
+			const ILSourceLocation& loc = ILSourceLocation());
 		ExprId VarPhi(const SSAVariable& dest, const std::vector<SSAVariable>& sources,
 		    const ILSourceLocation& loc = ILSourceLocation());
 		ExprId MemPhi(
@@ -16051,6 +16369,8 @@ namespace BinaryNinja {
 		ExprId DerefFieldSSA(size_t size, ExprId src, size_t srcMemVersion, uint64_t offset, size_t memberIndex,
 		    const ILSourceLocation& loc = ILSourceLocation());
 		ExprId AddressOf(ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId PassByRef(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ReturnByRef(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Const(size_t size, uint64_t val, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ConstPointer(size_t size, uint64_t val, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ExternPointer(
@@ -16099,6 +16419,17 @@ namespace BinaryNinja {
 		    size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Neg(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId Not(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ByteSwap(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId PopulationCount(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountLeadingZeros(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountTrailingZeros(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId ReverseBits(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId CountLeadingSigns(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MinSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MaxSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MinUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId MaxUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc = ILSourceLocation());
+		ExprId AbsoluteValue(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId SignExtend(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId ZeroExtend(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
 		ExprId LowPart(size_t size, ExprId src, const ILSourceLocation& loc = ILSourceLocation());
@@ -17753,7 +18084,22 @@ namespace BinaryNinja {
 	};
 
 	/*!
-		\ingroup callingconvention
+	    \ingroup callingconvention
+	*/
+	struct CallLayout
+	{
+		std::vector<ValueLocation> parameters;
+		std::optional<ValueLocation> returnValue;
+		int64_t stackAdjustment = 0;
+		std::map<uint32_t, int32_t> registerStackAdjustments;
+
+		static CallLayout FromAPIObject(BNCallLayout* layout);
+		BNCallLayout ToAPIObject() const;
+		static void FreeAPIObject(BNCallLayout* layout);
+	};
+
+	/*!
+	    \ingroup callingconvention
 	*/
 	class CallingConvention :
 	    public CoreRefCountObject<BNCallingConvention, BNNewCallingConventionReference, BNFreeCallingConvention>
@@ -17781,7 +18127,7 @@ namespace BinaryNinja {
 		static uint32_t GetIntegerReturnValueRegisterCallback(void* ctxt);
 		static uint32_t GetHighIntegerReturnValueRegisterCallback(void* ctxt);
 		static uint32_t GetFloatReturnValueRegisterCallback(void* ctxt);
-		static uint32_t GetGlobalPointerRegisterCallback(void* ctxt);
+		static uint32_t* GetGlobalPointerRegistersCallback(void* ctxt, size_t* count);
 
 		static uint32_t* GetImplicitlyDefinedRegistersCallback(void* ctxt, size_t* count);
 		static void GetIncomingRegisterValueCallback(
@@ -17793,14 +18139,73 @@ namespace BinaryNinja {
 		static void GetParameterVariableForIncomingVariableCallback(
 		    void* ctxt, const BNVariable* var, BNFunction* func, BNVariable* result);
 
-	  public:
+		static bool IsReturnTypeRegisterCompatibleCallback(void* ctxt, BNBinaryView* view, BNType* type);
+		static void GetIndirectReturnValueLocationCallback(void* ctxt, BNVariable* outVar);
+		static bool GetReturnedIndirectReturnValuePointerCallback(void* ctxt, BNVariable* outVar);
+
+		static bool IsArgumentTypeRegisterCompatibleCallback(void* ctxt, BNBinaryView* view, BNType* type);
+		static bool IsNonRegisterArgumentIndirectCallback(void* ctxt, BNBinaryView* view, BNType* type);
+		static bool AreStackArgumentsNaturallyAlignedCallback(void* ctxt);
+		static bool AreStackArgumentsPushedLeftToRightCallback(void* ctxt);
+
+		static void GetCallLayoutCallback(void* ctxt, BNBinaryView* view, BNReturnValue* returnValue,
+			BNFunctionParameter* params, size_t paramCount, bool hasPermittedRegs, uint32_t* permittedRegs,
+			size_t permittedRegCount, BNCallLayout* result);
+		static void FreeCallLayoutCallback(void* ctxt, BNCallLayout* layout);
+		static void GetReturnValueLocationCallback(
+			void* ctxt, BNBinaryView* view, BNReturnValue* returnValue, BNValueLocation* outLocation);
+		static void FreeValueLocationCallback(void* ctxt, BNValueLocation* location);
+		static BNValueLocation* GetParameterLocationsCallback(void* ctxt, BNBinaryView* view,
+			BNValueLocation* returnValue, BNFunctionParameter* params, size_t paramCount, bool hasPermittedRegs,
+			uint32_t* permittedRegs, size_t permittedRegCount, size_t* outLocationCount);
+		static void FreeParameterLocationsCallback(void* ctxt, BNValueLocation* locations, size_t count);
+		static BNVariable* GetParameterOrderingForVariablesCallback(
+			void* ctxt, BNBinaryView* view, BNVariable* vars, BNType** types, size_t paramCount, size_t* outCount);
+		static void FreeVariableListCallback(void* ctxt, BNVariable* vars, size_t count);
+		static int64_t GetStackAdjustmentForLocationsCallback(void* ctxt, BNBinaryView* view,
+			BNValueLocation* returnValue, BNValueLocation* locations, BNType** types, size_t paramCount);
+		static size_t GetRegisterStackAdjustmentsCallback(void* ctxt, BNBinaryView* view, BNValueLocation* returnValue,
+			BNValueLocation* params, size_t paramCount, uint32_t** outRegs, int32_t** outAdjust);
+		static void FreeRegisterStackAdjustmentsCallback(void* ctxt, uint32_t* regs, int32_t* adjust, size_t count);
+
+	public:
+		/*! Get the architecture this calling convention applies to
+
+			\return The architecture this calling convention applies to
+		*/
 		Ref<Architecture> GetArchitecture() const;
+
+		/*! Get the name of this calling convention
+
+			\return The name of this calling convention
+		*/
 		std::string GetName() const;
 
+		/*! Gets the list of registers that are not preserved across a call (caller-saved /
+			volatile registers).
+
+			\return The list of caller-saved register indices
+		*/
 		virtual std::vector<uint32_t> GetCallerSavedRegisters();
+
+		/*! Gets the list of registers that a callee must preserve across a call (callee-saved /
+			non-volatile registers).
+
+			\return The list of callee-saved register indices
+		*/
 		virtual std::vector<uint32_t> GetCalleeSavedRegisters();
 
+		/*! Gets the registers used to pass integer and pointer arguments, in the order they are
+			used.
+
+			\return The ordered list of integer argument register indices
+		*/
 		virtual std::vector<uint32_t> GetIntegerArgumentRegisters();
+
+		/*! Gets the registers used to pass floating point arguments, in the order they are used.
+
+			\return The ordered list of floating point argument register indices
+		*/
 		virtual std::vector<uint32_t> GetFloatArgumentRegisters();
 
 		/*! Gets the set of registers that must be arguments for heuristic calling convention
@@ -17817,23 +18222,370 @@ namespace BinaryNinja {
 		*/
 		virtual std::vector<uint32_t> GetRequiredClobberedRegisters();
 
+		/*! Whether the integer and floating point argument registers share a single argument
+			index.
+
+			When true, the Nth argument consumes the Nth slot of both the integer and float
+			register lists regardless of its type. When false, integer and float arguments are
+			assigned from their respective register lists independently.
+
+			\return Whether argument registers share a single index
+		*/
 		virtual bool AreArgumentRegistersSharedIndex();
+
+		/*! Whether argument registers are used to pass variadic arguments.
+
+			\return Whether argument registers are used for variadic arguments
+		*/
 		virtual bool AreArgumentRegistersUsedForVarArgs();
+
+		/*! Whether stack space is reserved by the caller for the register arguments (for example,
+			the shadow/home space used by the Windows x64 calling convention).
+
+			\return Whether stack space is reserved for argument registers
+		*/
 		virtual bool IsStackReservedForArgumentRegisters();
+
+		/*! Whether the callee adjusts the stack to remove the arguments before returning (as in
+			stdcall), rather than leaving the caller to clean up the stack (as in cdecl).
+
+			\return Whether the stack is adjusted by the callee on return
+		*/
 		virtual bool IsStackAdjustedOnReturn();
+
+		/*! Whether this calling convention may be selected by heuristic calling convention
+			detection.
+
+			\return Whether this calling convention is eligible for heuristics
+		*/
 		virtual bool IsEligibleForHeuristics();
 
-		virtual uint32_t GetIntegerReturnValueRegister() = 0;
-		virtual uint32_t GetHighIntegerReturnValueRegister();
-		virtual uint32_t GetFloatReturnValueRegister();
-		virtual uint32_t GetGlobalPointerRegister();
+		/*! Gets the register that holds the integer return value.
 
+			\return The integer return value register index
+		*/
+		virtual uint32_t GetIntegerReturnValueRegister() = 0;
+
+		/*! Gets the register that holds the high part of an integer return value that is too
+			large to fit in a single register.
+
+			\return The high integer return value register index, or BN_INVALID_REGISTER if there is none
+		*/
+		virtual uint32_t GetHighIntegerReturnValueRegister();
+
+		/*! Gets the register that holds the floating point return value.
+
+			\return The floating point return value register index, or BN_INVALID_REGISTER if there is none
+		*/
+		virtual uint32_t GetFloatReturnValueRegister();
+
+		/*! \deprecated Use GetGlobalPointerRegisters instead. New calling convention implementations
+			should override GetGlobalPointerRegisters.
+
+			\return The global pointer register index, or BN_INVALID_REGISTER if there is none
+		*/
+		virtual uint32_t GetGlobalPointerRegister();
+		virtual std::vector<uint32_t> GetGlobalPointerRegisters();
+
+		/*! Gets the registers that are implicitly given a known value on function entry by this
+			calling convention.
+
+			\return The list of implicitly defined register indices
+			\see GetIncomingRegisterValue
+		*/
 		virtual std::vector<uint32_t> GetImplicitlyDefinedRegisters();
+
+		/*! Gets the known value of a register on entry to a function.
+
+			\param reg Register index
+			\param func Function being analyzed
+			\return The incoming value of the register
+		*/
 		virtual RegisterValue GetIncomingRegisterValue(uint32_t reg, Function* func);
+
+		/*! Gets the known value of a flag on entry to a function.
+
+			\param flag Flag index
+			\param func Function being analyzed
+			\return The incoming value of the flag
+		*/
 		virtual RegisterValue GetIncomingFlagValue(uint32_t flag, Function* func);
 
+		/*! Gets the incoming variable that corresponds to the given parameter variable. This is
+			the inverse of GetParameterVariableForIncomingVariable.
+
+			\param var Parameter variable
+			\param func Function being analyzed
+			\return The incoming variable corresponding to the parameter variable
+			\see GetParameterVariableForIncomingVariable
+		*/
 		virtual Variable GetIncomingVariableForParameterVariable(const Variable& var, Function* func);
+
+		/*! Gets the parameter variable that corresponds to the given incoming variable. This is
+			the inverse of GetIncomingVariableForParameterVariable.
+
+			\param var Incoming variable
+			\param func Function being analyzed
+			\return The parameter variable corresponding to the incoming variable
+			\see GetIncomingVariableForParameterVariable
+		*/
 		virtual Variable GetParameterVariableForIncomingVariable(const Variable& var, Function* func);
+
+		/*! Whether a value of the given type can be returned in registers, as opposed to being
+			returned indirectly through memory.
+
+			\param view BinaryView providing type information
+			\param type Return type to check
+			\return Whether the return type is register compatible
+			\see GetIndirectReturnValueLocation
+		*/
+		virtual bool IsReturnTypeRegisterCompatible(BinaryView* view, Type* type);
+
+		/*! Default implementation of IsReturnTypeRegisterCompatible. The default implementation allows
+			register returns for types that fit in a single register, have a size equal to two registers
+			when GetHighIntegerReturnValueRegister is a valid register, or are a floating point type when
+			GetFloatReturnValueRegister is a valid register.
+
+			\param type Return type to check
+			\return Whether the return type is register compatible
+		*/
+		bool DefaultIsReturnTypeRegisterCompatible(Type* type);
+
+		/*! Gets the location used to pass the hidden pointer argument for return values that are
+			returned indirectly through memory.
+
+			\return The location of the indirect return value pointer
+			\see IsReturnTypeRegisterCompatible
+		*/
+		virtual Variable GetIndirectReturnValueLocation();
+
+		/*! Default implementation of GetIndirectReturnValueLocation. The default location is the first
+			integer argument register, or the first stack slot if there are no integer argument registers.
+
+			\return The location of the indirect return value pointer
+		*/
+		Variable GetDefaultIndirectReturnValueLocation();
+
+		/*! Gets the location in which the hidden indirect return value pointer is returned to the
+			caller, for calling conventions that return it.
+
+			\return The location the indirect return value pointer is returned in, or std::nullopt if it is not returned
+		*/
+		virtual std::optional<Variable> GetReturnedIndirectReturnValuePointer();
+
+		/*! Whether a value of the given type can be passed as an argument in registers.
+
+			\param view BinaryView providing type information
+			\param type Argument type to check
+			\return Whether the argument type is register compatible
+		*/
+		virtual bool IsArgumentTypeRegisterCompatible(BinaryView* view, Type* type);
+
+		/*! Default implementation of IsArgumentTypeRegisterCompatible. The default implementation allows
+			register arguments for types that fit in a single register, or are a floating point type when
+			GetFloatArgumentRegisters has valid registers.
+
+			\param type Argument type to check
+			\return Whether the argument type is register compatible
+		*/
+		bool DefaultIsArgumentTypeRegisterCompatible(Type* type);
+
+		/*! Whether an argument that cannot be passed in registers is passed indirectly by pointer
+			as opposed to being passed directly on the stack.
+
+			\param view BinaryView providing type information
+			\param type Argument type to check
+			\return Whether the non-register argument is passed indirectly by pointer
+		*/
+		virtual bool IsNonRegisterArgumentIndirect(BinaryView* view, Type* type);
+
+		/*! Whether arguments passed on the stack are aligned to their natural alignment. If false,
+			arguments are aligned to the address size.
+
+			\return Whether stack arguments are naturally aligned
+		*/
+		virtual bool AreStackArgumentsNaturallyAligned();
+
+		/*! Whether arguments passed on the stack are pushed left-to-right, as opposed to the more
+			common right-to-left order.
+
+			\return Whether stack arguments are pushed left-to-right
+		*/
+		virtual bool AreStackArgumentsPushedLeftToRight();
+
+		/*! Computes the complete call layout (parameter locations, return value location, and
+			stack adjustments) for a call with the given return value and parameters. It is
+			recommended to only override this method if the calling convention behavior cannot
+			be modeled with GetReturnValueLocation and/or GetParameterLocations.
+
+			The default implementation calls GetDefaultCallLayout.
+
+			When calling this function to query the layout of a function, the return value and parameters
+			should have their named type references dereferenced before passing them to this function.
+			Calling the functions BinaryView::DerefReturnValueNamedTypeRefs and
+			BinaryView::DerefParameterNamedTypeRefs will perform this dereferencing.
+
+			\param view BinaryView providing type information
+			\param returnValue Return value of the call
+			\param params Parameters of the call
+			\param permittedRegs Optional set of register indices that argument passing is
+				restricted to; if not provided, the calling convention's default registers are used
+			\return The computed call layout
+		*/
+		virtual CallLayout GetCallLayout(BinaryView* view, const ReturnValue& returnValue,
+			const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt);
+
+		/*! Computes the location of the return value for the given return value type and location structure.
+
+			The default implementation calls GetDefaultReturnValueLocation.
+
+			\param view BinaryView providing type information
+			\param returnValue Return value to compute the location for
+			\return The location of the return value
+		*/
+		virtual ValueLocation GetReturnValueLocation(BinaryView* view, const ReturnValue& returnValue);
+
+		/*! Computes the locations of the parameters for a call with the given return value and
+			parameters.
+
+			The default implementation calls GetDefaultParameterLocations.
+
+			\param view BinaryView providing type information
+			\param returnValue Optional location of the return value, which may affect parameter
+				placement (for example, when an indirect return pointer consumes an argument
+				register)
+			\param params Parameters of the call
+			\param permittedRegs Optional set of register indices that argument passing is
+				restricted to; if not provided, the calling convention's default registers are used
+			\return The locations of the parameters, in order
+		*/
+		virtual std::vector<ValueLocation> GetParameterLocations(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt);
+
+		/*! Computes the order in which the given parameter variables are passed. Used by the heuristic
+			calling convention detection to create a function type from a list of parameter variables.
+
+			The default implementation calls GetDefaultParameterOrderingForVariables.
+
+			\param view BinaryView providing type information
+			\param params Map of parameter variables to their types
+			\return The parameter variables in the order they are passed
+		*/
+		virtual std::vector<Variable> GetParameterOrderingForVariables(
+			BinaryView* view, const std::map<Variable, Ref<Type>>& params);
+
+		/*! Computes the stack adjustment applied on return for a call with the given return value
+			and parameter locations.
+
+			The default implementation calls GetDefaultStackAdjustmentForLocations.
+
+			\param view BinaryView providing type information
+			\param returnValue Optional location of the return value
+			\param locations Locations of the parameters
+			\param types Types of the parameters, corresponding to \p locations
+			\return The stack adjustment in bytes
+			\see IsStackAdjustedOnReturn
+		*/
+		virtual int64_t GetStackAdjustmentForLocations(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<ValueLocation>& locations,
+			const std::vector<Ref<Type>>& types);
+
+		/*! Computes the per-register-stack adjustments (for architectures with register stacks,
+			such as the x87 floating point stack) for a call with the given return value and
+			parameter locations.
+
+			The default implementation calls GetDefaultRegisterStackAdjustments.
+
+			\param view BinaryView providing type information
+			\param returnValue Optional location of the return value
+			\param params Locations of the parameters
+			\return A map from register stack index to its adjustment
+		*/
+		virtual std::map<uint32_t, int32_t> GetRegisterStackAdjustments(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<ValueLocation>& params);
+
+		/*! Default implementation of GetCallLayout. The default implementation uses GetReturnValueLocation,
+			GetParameterLocations, GetStackAdjustmentForLocations, and GetRegisterStackAdjustments to
+			compute the layout.
+
+			\param view BinaryView providing type information
+			\param returnValue Return value of the call
+			\param params Parameters of the call
+			\param permittedRegs Optional set of register indices that argument passing is
+				restricted to; if not provided, the calling convention's default registers are used
+			\return The computed call layout
+		*/
+		CallLayout GetDefaultCallLayout(BinaryView* view, const ReturnValue& returnValue,
+			const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt);
+
+		/*! Default implementation of GetReturnValueLocation. The default implementation checks
+			IsReturnTypeRegisterCompatible and places the return value in registers if it can,
+			or uses an indirect return by pointer if not. If an indirect return is required, then
+			GetIndirectReturnValueLocation and GetReturnedIndirectReturnValuePointer are used
+			to provide the location of the indirect return value.
+
+			\param view BinaryView providing type information
+			\param returnValue Return value to compute the location for
+			\return The location of the return value
+		*/
+		ValueLocation GetDefaultReturnValueLocation(BinaryView* view, const ReturnValue& returnValue);
+
+		/*! Default implementation of GetParameterLocations. The default implementation uses
+			GetIntegerArgumentRegisters, GetFloatArgumentRegisters, AreArgumentRegistersSharedIndex,
+			IsStackReservedForArgumentRegisters, IsArgumentTypeRegisterCompatible, IsNonRegisterArgumentIndirect,
+			AreStackArgumentsNaturallyAligned, and AreStackArgumentsPushedLeftToRight to
+			compute the parameter layout.
+
+			This function is usually sufficient unless the calling convention has unusual parameter
+			passing behavior. Most calling conventions can be defined per-argument using the methods
+			listed above.
+
+			\param view BinaryView providing type information
+			\param returnValue Optional location of the return value
+			\param params Parameters of the call
+			\param permittedRegs Optional set of register indices that argument passing is
+				restricted to; if not provided, the calling convention's default registers are used
+			\return The locations of the parameters, in order
+		*/
+		std::vector<ValueLocation> GetDefaultParameterLocations(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt);
+
+		/*! Default implementation of GetParameterOrderingForVariables. The default implementation first checks
+			AreArgumentRegistersSharedIndex to see if the parameter ordering is well defined. If the arguments
+			do not share an index, it places all integer arguments before the floating point arguments.
+			Arguments that are not passed in a normal location are placed last.
+
+			\param params Map of parameter variables to their types
+			\return The parameter variables in the order they are passed
+		*/
+		std::vector<Variable> GetDefaultParameterOrderingForVariables(const std::map<Variable, Ref<Type>>& params);
+
+		/*! Default implementation of GetStackAdjustmentForLocations. The default implementation first checks
+			IsStackAdjustedOnReturn, and returns zero if that returns false. Otherwise, it checks the stack
+			parameter locations and AreStackArgumentsNaturallyAligned to compute the stack adjustment necessary
+			to cover all parameters.
+
+			\param returnValue Optional location of the return value
+			\param locations Locations of the parameters
+			\param types Types of the parameters, corresponding to \p locations
+			\return The stack adjustment in bytes
+		*/
+		int64_t GetDefaultStackAdjustmentForLocations(const std::optional<ValueLocation>& returnValue,
+			const std::vector<ValueLocation>& locations, const std::vector<Ref<Type>>& types);
+
+		/*! Default implementation of GetRegisterStackAdjustments. The default implementation compares the
+			register stack slots used by the parameters and the return value to compute the adjustments.
+
+			\param returnValue Optional location of the return value
+			\param params Locations of the parameters
+			\return A map from register stack index to its adjustment
+		*/
+		std::map<uint32_t, int32_t> GetDefaultRegisterStackAdjustments(
+			const std::optional<ValueLocation>& returnValue, const std::vector<ValueLocation>& params);
 	};
 
 	/*!
@@ -17860,7 +18612,11 @@ namespace BinaryNinja {
 		virtual uint32_t GetIntegerReturnValueRegister() override;
 		virtual uint32_t GetHighIntegerReturnValueRegister() override;
 		virtual uint32_t GetFloatReturnValueRegister() override;
+		/*! \deprecated Use GetGlobalPointerRegisters instead. New calling convention implementations
+			should override GetGlobalPointerRegisters.
+		*/
 		virtual uint32_t GetGlobalPointerRegister() override;
+		virtual std::vector<uint32_t> GetGlobalPointerRegisters() override;
 
 		virtual std::vector<uint32_t> GetImplicitlyDefinedRegisters() override;
 		virtual RegisterValue GetIncomingRegisterValue(uint32_t reg, Function* func) override;
@@ -17868,6 +18624,30 @@ namespace BinaryNinja {
 
 		virtual Variable GetIncomingVariableForParameterVariable(const Variable& var, Function* func) override;
 		virtual Variable GetParameterVariableForIncomingVariable(const Variable& var, Function* func) override;
+
+		virtual bool IsReturnTypeRegisterCompatible(BinaryView* view, Type* type) override;
+		virtual Variable GetIndirectReturnValueLocation() override;
+		virtual std::optional<Variable> GetReturnedIndirectReturnValuePointer() override;
+
+		virtual bool IsArgumentTypeRegisterCompatible(BinaryView* view, Type* type) override;
+		virtual bool IsNonRegisterArgumentIndirect(BinaryView* view, Type* type) override;
+		virtual bool AreStackArgumentsNaturallyAligned() override;
+		virtual bool AreStackArgumentsPushedLeftToRight() override;
+
+		virtual CallLayout GetCallLayout(BinaryView* view, const ReturnValue& returnValue,
+			const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt) override;
+		virtual ValueLocation GetReturnValueLocation(BinaryView* view, const ReturnValue& returnValue) override;
+		virtual std::vector<ValueLocation> GetParameterLocations(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<FunctionParameter>& params,
+			const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt) override;
+		virtual std::vector<Variable> GetParameterOrderingForVariables(
+			BinaryView* view, const std::map<Variable, Ref<Type>>& params) override;
+		virtual int64_t GetStackAdjustmentForLocations(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<ValueLocation>& locations,
+			const std::vector<Ref<Type>>& types) override;
+		virtual std::map<uint32_t, int32_t> GetRegisterStackAdjustments(BinaryView* view,
+			const std::optional<ValueLocation>& returnValue, const std::vector<ValueLocation>& params) override;
 	};
 
 	/*!
@@ -18905,6 +19685,8 @@ namespace BinaryNinja {
 		static void SetCurrentSelectionCallback(void* ctxt, uint64_t begin, uint64_t end);
 		static char* CompleteInputCallback(void* ctxt, const char* text, uint64_t state);
 		static void StopCallback(void* ctxt);
+		static bool CanCompleteArgumentsCallback(void* ctxt, const char* text);
+		static char* CompleteArgumentsCallback(void* ctx, const char* text, uint64_t* argumentStart);
 
 		virtual void DestroyInstance();
 
@@ -18920,6 +19702,8 @@ namespace BinaryNinja {
 		virtual void SetCurrentSelection(uint64_t begin, uint64_t end);
 		virtual std::string CompleteInput(const std::string& text, uint64_t state);
 		virtual void Stop();
+		virtual bool CanCompleteArguments(const std::string& text);
+		virtual std::pair<std::string, uint64_t> CompleteArguments(const std::string& text);
 
 		void Output(const std::string& text);
 		void Warning(const std::string& text);
@@ -18954,6 +19738,8 @@ namespace BinaryNinja {
 		virtual void SetCurrentSelection(uint64_t begin, uint64_t end) override;
 		virtual std::string CompleteInput(const std::string& text, uint64_t state) override;
 		virtual void Stop() override;
+		virtual bool CanCompleteArguments(const std::string& text) override;
+		virtual std::pair<std::string, uint64_t> CompleteArguments(const std::string& text) override;
 	};
 
 	/*!
@@ -19605,6 +20391,14 @@ namespace BinaryNinja {
 		virtual std::vector<DisassemblyTextLine> GetLinesForData(BinaryView* data, uint64_t addr, Type* type,
 		    const std::vector<InstructionTextToken>& prefix, size_t width,
 			std::vector<std::pair<Type*, size_t>>& context, const std::string& language = std::string());
+
+		/*! Render lines for data using the registered data renderers.
+
+		    \deprecated Use \c DataRendererContainer::RenderLinesForData instead. This instance method does not use
+		    any state from the receiving \c DataRenderer; constructing a transient instance just to call it leaks
+		    the underlying core object.
+		*/
+		BN_DEPRECATED("Use DataRendererContainer::RenderLinesForData", "DataRendererContainer::RenderLinesForData")
 		std::vector<DisassemblyTextLine> RenderLinesForData(BinaryView* data, uint64_t addr, Type* type,
 		    const std::vector<InstructionTextToken>& prefix, size_t width,
 		    std::vector<std::pair<Type*, size_t>>& context, const std::string& language = std::string());
@@ -19626,6 +20420,9 @@ namespace BinaryNinja {
 	  public:
 		static void RegisterGenericDataRenderer(DataRenderer* renderer);
 		static void RegisterTypeSpecificDataRenderer(DataRenderer* renderer);
+		static std::vector<DisassemblyTextLine> RenderLinesForData(BinaryView* data, uint64_t addr, Type* type,
+		    const std::vector<InstructionTextToken>& prefix, size_t width,
+		    std::vector<std::pair<Type*, size_t>>& context, const std::string& language = std::string());
 	};
 
 	/*!
@@ -21237,7 +22034,6 @@ namespace BinaryNinja {
 	{
 	public:
 		FirmwareNinjaReferenceNode(BNFirmwareNinjaReferenceNode* node);
-		~FirmwareNinjaReferenceNode();
 
 		/*! Returns true if the reference tree node contains a function
 

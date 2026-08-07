@@ -3197,7 +3197,7 @@ class BinaryView:
 			_handle = core.BNCreateCustomBinaryView(self.__class__.name, file_metadata.handle, _parent_view, self._cb)
 
 		assert _handle is not None
-		self.handle = _handle
+		self._handle = _handle
 		self._notifications = {}
 		self._parse_only = False
 		self._preload_limit = 5
@@ -3210,9 +3210,9 @@ class BinaryView:
 		for i in self._notifications.values():
 			i._unregister()
 		self._notifications.clear()
-		if self.handle is not None:
-			core.BNFreeBinaryView(self.handle)
-			self.handle = None
+		if self._handle is not None:
+			core.BNFreeBinaryView(self._handle)
+			self._handle = None
 
 	def __enter__(self) -> 'BinaryView':
 		return self
@@ -3225,6 +3225,8 @@ class BinaryView:
 		self._cleanup()
 
 	def __repr__(self):
+		if self._handle is None:
+			return "<BinaryView: disposed>"
 		start = self.start
 		length = self.length
 		if start != 0:
@@ -3239,6 +3241,12 @@ class BinaryView:
 	@property
 	def length(self):
 		return int(core.BNGetViewLength(self.handle))
+
+	@property
+	def handle(self):
+		if self._handle is None:
+			raise ReferenceError("BinaryView has been disposed")
+		return self._handle
 
 	def __bool__(self):
 		return True
@@ -4196,21 +4204,65 @@ class BinaryView:
 
 	@property
 	def global_pointer_value(self) -> 'variable.RegisterValue':
-		"""Discovered value of the global pointer register, if the binary uses one (read-only)"""
-		result = core.BNGetGlobalPointerValue(self.handle)
-		return variable.RegisterValue.from_BNRegisterValue(result, self.arch)
+		"""Deprecated. Use :py:attr:`global_pointer_values` instead."""
+		values = self.global_pointer_values
+		if not values:
+			return variable.Undetermined()
+		return values[0][1]
 
 	@property
+	def global_pointer_values(self) -> List[Tuple['architecture.RegisterName', 'variable.RegisterValue']]:
+		"""Discovered values of the global pointer registers, if the binary uses any (read-only)"""
+		return self._get_global_pointer_values(core.BNGetGlobalPointerValues)
+
+	@property
+	def default_global_pointer_values(self) -> List[Tuple['architecture.RegisterName', 'variable.RegisterValue']]:
+		"""Auto-discovered values of the global pointer registers before user overrides are applied (read-only)"""
+		return self._get_global_pointer_values(core.BNGetDefaultGlobalPointerValues)
+
+	@property
+	def user_global_pointer_values(self) -> List[Tuple['architecture.RegisterName', 'variable.RegisterValue']]:
+		"""User overrides for global pointer register values (read-only)"""
+		return self._get_global_pointer_values(core.BNGetUserGlobalPointerValues)
+
+	def _get_global_pointer_values(self, getter) -> List[Tuple['architecture.RegisterName', 'variable.RegisterValue']]:
+		count = ctypes.c_ulonglong()
+		values = getter(self.handle, count)
+		if values is None:
+			return []
+		try:
+			return [
+			    (self.arch.get_reg_name(values[i].reg), variable.RegisterValue.from_BNRegisterValue(values[i].value, self.arch))
+			    for i in range(count.value)
+			]
+		finally:
+			core.BNFreeRegisterValueWithConfidenceAndRegisterList(values)
+
+	@property
+	@deprecation.deprecated(deprecated_in="5.4", details="Use `BinaryView.user_global_pointer_values_set` instead.")
 	def user_global_pointer_value_set(self) -> bool:
-		"""Check whether a user global pointer value has been set"""
-		return core.BNUserGlobalPointerValueSet(self.handle)
+		"""Deprecated. Use :py:attr:`user_global_pointer_values_set` instead."""
+		return self.user_global_pointer_values_set
 
+	@property
+	def user_global_pointer_values_set(self) -> bool:
+		"""Check whether user global pointer values have been set"""
+		return core.BNUserGlobalPointerValuesSet(self.handle)
+
+	@deprecation.deprecated(deprecated_in="5.4", details="Use `BinaryView.clear_user_global_pointer_values` instead.")
 	def clear_user_global_pointer_value(self):
-		"""Clear a previously set user global pointer value, so the auto-analysis can calculate a new value"""
-		core.BNClearUserGlobalPointerValue(self.handle)
+		"""Deprecated. Use :py:meth:`clear_user_global_pointer_values` instead."""
+		self.clear_user_global_pointer_values()
 
+	def clear_user_global_pointer_values(self):
+		"""Clear previously set user global pointer values, so the auto-analysis can calculate new values"""
+		core.BNClearUserGlobalPointerValues(self.handle)
+
+	@deprecation.deprecated(deprecated_in="5.4", details="Use `BinaryView.set_user_global_pointer_values` instead.")
 	def set_user_global_pointer_value(self, value: variable.RegisterValue, confidence = 255):
 		"""
+		Deprecated. Use :py:meth:`set_user_global_pointer_values` instead.
+
 		Set a user global pointer value. This is useful when the auto analysis fails to find out the value of the global
 		pointer, or the value is wrong. In this case, we can call ``set_user_global_pointer_value`` with a
 		``ConstantRegisterValue`` or ``ConstantPointerRegisterValue`` to provide a user global pointer value to assist the
@@ -4250,10 +4302,27 @@ class BinaryView:
 			>>> bv.global_pointer_value
 			<undetermined>
 		"""
-		val = core.BNRegisterValueWithConfidence()
-		val.value = value._to_core_struct()
-		val.confidence = confidence
-		core.BNSetUserGlobalPointerValue(self.handle, val)
+		values = [(reg, value, confidence) for reg, _ in self.global_pointer_values]
+		if not values:
+			values = [(0xffffffff, value, confidence)]
+		self.set_user_global_pointer_values(values)
+
+	def set_user_global_pointer_values(self, values):
+		"""
+		Set user global pointer values for multiple registers.
+
+		:param list[tuple[str, variable.RegisterValue]] values: register name/value pairs
+		:return: None
+		:rtype: None
+		"""
+		api_values = (core.BNRegisterValueWithConfidenceAndRegister * len(values))()
+		for i, value in enumerate(values):
+			reg, reg_value = value[:2]
+			confidence = value[2] if len(value) > 2 else 255
+			api_values[i].reg = reg if isinstance(reg, int) else self.arch.get_reg_index(reg)
+			api_values[i].value.value = reg_value._to_core_struct()
+			api_values[i].value.confidence = confidence
+		core.BNSetUserGlobalPointerValues(self.handle, api_values, len(values))
 
 	@property
 	def parameters_for_analysis(self):
@@ -10090,11 +10159,13 @@ to a the type "tagRECT" found in the typelibrary "winX64common"
 		limit: Optional[int] = None, progress_callback: Optional[ProgressFuncType] = None, match_callback: Optional[DataMatchCallbackType] = None) -> QueueGenerator:
 		r"""
 		Searches for matches of the specified ``pattern`` within this BinaryView with an optionally provided address range specified by ``start`` and ``end``.
-		This is the API used by the advanced binary search UI option. The search pattern can be interpreted in various ways:
+		This is the API used by the advanced binary search UI option. The pattern is interpreted as one of:
 
-			- specified as a string of hexadecimal digits where whitespace is ignored, and the '?' character acts as a wildcard
-			- a regular expression suitable for working with bytes
-			- or if the ``raw`` option is enabled, the pattern is interpreted as a raw string, and any special characters are escaped and interpreted literally
+			- ``"FlexHex"``: a sequence of byte tokens drawn from ``[0-9a-fA-F?]``, where ``??`` (or a whitespace-separated lone ``?``) is a full-byte wildcard and ``?X`` / ``X?`` matches a single nibble. Whitespace between byte tokens is optional, but a lone ``?`` must be whitespace-separated (so ``c3 ? 55`` is valid; ``c3?55`` is not).
+			- ``"Regex"``: a byte-level regular expression.
+			- ``"Raw String"``: a literal string match. Used when ``raw=True``, or as a fallback when the pattern is neither valid FlexHex nor a valid regex.
+
+		Use :py:meth:`detect_search_mode` to check which mode would be selected for a given pattern.
 
 		:param pattern: The pattern to search for.
 		:type pattern: :py:class:`str`
@@ -10122,6 +10193,8 @@ to a the type "tagRECT" found in the typelibrary "winX64common"
 			<BinaryView: '/bin/ls', start 0x100000000, len 0x182f8>
 			>>> bytes(list(bv.search("50 ?4"))[0][1]).hex()
 			'5004'
+			>>> bytes(list(bv.search("E8 ? ? ? ?"))[0][1]).hex()  # call with 4-byte wildcard operand
+			'e83e380000'
 			>>> bytes(list(bv.search("[\x20-\x25][\x60-\x67]"))[0][1]).hex()
 			'2062'
 		"""
@@ -10175,6 +10248,12 @@ to a the type "tagRECT" found in the typelibrary "winX64common"
 	def detect_search_mode(pattern: str, raw: bool = False) -> str:
 		"""
 		Detects the search mode that would be used by :py:meth:`search` for the given pattern.
+
+		The mode is one of:
+
+			- ``"FlexHex"``: a sequence of byte tokens drawn from ``[0-9a-fA-F?]``, where ``??`` (or a whitespace-separated lone ``?``) is a full-byte wildcard and ``?X`` / ``X?`` matches a single nibble. Whitespace between byte tokens is optional, but a lone ``?`` must be whitespace-separated (so ``c3 ? 55`` is valid; ``c3?55`` is not).
+			- ``"Regex"``: a byte-level regular expression.
+			- ``"Raw String"``: a literal string match. Returned when ``raw=True``, or as a fallback when the pattern is neither valid FlexHex nor a valid regex.
 
 		:param str pattern: The search pattern to analyze.
 		:param bool raw: Whether to interpret the pattern as a raw string (default: False).
@@ -10854,7 +10933,7 @@ to a the type "tagRECT" found in the typelibrary "winX64common"
 		if not core.BNParseExpression(self.handle, expression, offset, here, errors):
 			assert errors.value is not None, "core.BNParseExpression returned errors set to None"
 			error_str = errors.value.decode("utf-8")
-			core.free_string(errors)
+			core.BNFreeParseError(ctypes.cast(errors, ctypes.POINTER(ctypes.c_byte)))
 			raise ValueError(error_str)
 		return offset.value
 
@@ -11036,6 +11115,24 @@ to a the type "tagRECT" found in the typelibrary "winX64common"
 		result = string.value.decode('utf-8')
 		core.free_string(string)
 		return result, StringType(string_type.value)
+
+	def deref_parameter_named_type_references(self, params: List['_types.FunctionParameter']):
+		result = []
+		for param in params:
+			if param.type is None:
+				ty = None
+			else:
+				ty = param.type.deref_named_type_reference(self).with_confidence(param.type.confidence)
+			result.append(_types.FunctionParameter(ty, param.name, param.location, param.location_source))
+		return result
+
+	def deref_return_value_named_type_references(self, value: '_types.ReturnValue'):
+		if value.type is None:
+			ty = None
+		else:
+			ty = value.type.deref_named_type_reference(self).with_confidence(value.type.confidence)
+		return _types.ReturnValue(ty, value.location)
+
 
 class BinaryReader:
 	"""

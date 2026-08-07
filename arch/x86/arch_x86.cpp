@@ -2153,6 +2153,17 @@ size_t X86CommonArchitecture::GetFlagWriteLowLevelIL(BNLowLevelILOperation op, s
 		}
 	}
 
+	// POPCNT sets ZF from the result and clears every other flag. ZF falls through to the default
+	// (result == 0) handling below.
+	if (flagWriteType == IL_FLAGWRITE_POPCNT && flag != IL_FLAG_Z)
+		return il.Const(0, 0);
+
+	// LZCNT/TZCNT set CF when the source is zero and ZF from the result. The remaining flags are
+	// undefined and are not written. ZF falls through to the default (result == 0) handling below.
+	if (flagWriteType == IL_FLAGWRITE_LZTZCNT && flag == IL_FLAG_C && operandCount >= 1)
+		return il.AddExpr(LLIL_CMP_E, size, 0,
+			il.GetExprForRegisterOrConstant(operands[0], size), il.AddExpr(LLIL_CONST, size, 0, 0));
+
 	if (flagWriteType == IL_FLAGWRITE_X87RND && flag == IL_FLAG_C1)
 		return il.Unimplemented();
 
@@ -2318,6 +2329,10 @@ string X86CommonArchitecture::GetFlagWriteTypeName(uint32_t flags)
 		return "x87rnd";
 	case IL_FLAGWRITE_VCOMI:
 		return "vcomi";
+	case IL_FLAGWRITE_POPCNT:
+		return "popcnt";
+	case IL_FLAGWRITE_LZTZCNT:
+		return "lztzcnt";
 	default:
 		return "";
 	}
@@ -2344,7 +2359,7 @@ vector<uint32_t> X86CommonArchitecture::GetAllFlagWriteTypes()
 {
 	return vector<uint32_t> {IL_FLAGWRITE_ALL, IL_FLAGWRITE_NOCARRY, IL_FLAGWRITE_CO,
 		IL_FLAGWRITE_X87COM, IL_FLAGWRITE_X87COMI, IL_FLAGWRITE_X87C1Z, IL_FLAGWRITE_X87RND,
-		IL_FLAGWRITE_VCOMI};
+		IL_FLAGWRITE_VCOMI, IL_FLAGWRITE_POPCNT, IL_FLAGWRITE_LZTZCNT};
 }
 
 BNFlagRole X86CommonArchitecture::GetFlagRole(uint32_t flag, uint32_t semClass)
@@ -2558,6 +2573,10 @@ vector<uint32_t> X86CommonArchitecture::GetFlagsWrittenByFlagWriteType(uint32_t 
 		return vector<uint32_t>{ IL_FLAG_C1 };
 	case IL_FLAGWRITE_VCOMI:
 		return vector<uint32_t>{ IL_FLAG_C, IL_FLAG_P, IL_FLAG_A, IL_FLAG_Z, IL_FLAG_S, IL_FLAG_O };
+	case IL_FLAGWRITE_POPCNT:
+		return vector<uint32_t>{ IL_FLAG_C, IL_FLAG_P, IL_FLAG_A, IL_FLAG_Z, IL_FLAG_S, IL_FLAG_O };
+	case IL_FLAGWRITE_LZTZCNT:
+		return vector<uint32_t>{ IL_FLAG_C, IL_FLAG_Z };
 	default:
 		return vector<uint32_t>();
 	}
@@ -3827,6 +3846,69 @@ public:
 		}
 		return result;
 	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	std::optional<Variable> GetReturnedIndirectReturnValuePointer() override
+	{
+		return Variable::Register(XED_REG_EAX);
+	}
+};
+
+
+class X86SystemVCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86SystemVCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "sysv")
+	{
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+
+		// If we have an unresolved NTR, we don't actually know what the type is. But it is more likely to
+		// be a structure than anything else, so use the same logic as an identified structure.
+		if (type->IsNamedTypeRefer())
+			return false;
+
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		// Only for indirect returns, see GetStackAdjustmentForLocations below
+		return true;
+	}
+
+	int64_t GetStackAdjustmentForLocations(BinaryView*, const std::optional<ValueLocation>& returnValue,
+		const vector<ValueLocation>&, const vector<Ref<Type>>&) override
+	{
+		if (!returnValue.has_value())
+			return 0;
+		// Indirect return values have the pointer popped off the stack by the called function
+		if (returnValue->indirect)
+			return 4;
+		return 0;
+	}
 };
 
 
@@ -3853,6 +3935,34 @@ public:
 };
 
 
+class X86SystemVStdcallCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86SystemVStdcallCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "sysv-stdcall")
+	{
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+};
+
+
 class X86RegParmCallingConvention: public X86BaseCallingConvention
 {
 public:
@@ -3860,9 +3970,32 @@ public:
 	{
 	}
 
-	virtual vector<uint32_t> GetIntegerArgumentRegisters() override
+	vector<uint32_t> GetIntegerArgumentRegisters() override
 	{
 		return vector<uint32_t>{ XED_REG_EAX, XED_REG_EDX, XED_REG_ECX };
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	bool IsArgumentTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		return type->GetWidth() <= 12;
 	}
 };
 
@@ -3882,6 +4015,82 @@ public:
 	virtual bool IsStackAdjustedOnReturn() override
 	{
 		return true;
+	}
+};
+
+
+class X86GCCFastcallCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86GCCFastcallCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "gcc-fastcall")
+	{
+	}
+
+	vector<uint32_t> GetIntegerArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX, XED_REG_EDX };
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	Variable GetIndirectReturnValueLocation() override
+	{
+		return Variable::Register(XED_REG_ECX);
+	}
+};
+
+
+class X86ClangFastcallCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86ClangFastcallCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "clang-fastcall")
+	{
+	}
+
+	vector<uint32_t> GetIntegerArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX, XED_REG_EDX };
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	Variable GetIndirectReturnValueLocation() override
+	{
+		return Variable::StackOffset(4);
 	}
 };
 
@@ -3906,6 +4115,92 @@ public:
 	virtual bool IsStackAdjustedOnReturn() override
 	{
 		return true;
+	}
+};
+
+
+class X86GCCThiscallCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86GCCThiscallCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "gcc-thiscall")
+	{
+	}
+
+	vector<uint32_t> GetIntegerArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX };
+	}
+
+	vector<uint32_t> GetRequiredArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX };
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	Variable GetIndirectReturnValueLocation() override
+	{
+		return Variable::Register(XED_REG_ECX);
+	}
+};
+
+
+class X86ClangThiscallCallingConvention: public X86BaseCallingConvention
+{
+public:
+	X86ClangThiscallCallingConvention(Architecture* arch): X86BaseCallingConvention(arch, "clang-thiscall")
+	{
+	}
+
+	vector<uint32_t> GetIntegerArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX };
+	}
+
+	vector<uint32_t> GetRequiredArgumentRegisters() override
+	{
+		return vector<uint32_t>{ XED_REG_ECX };
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		if (type->IsStructure() || type->IsArray())
+			return false;
+		if (type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8)
+			return true;
+		return false;
+	}
+
+	Variable GetIndirectReturnValueLocation() override
+	{
+		return Variable::StackOffset(4);
 	}
 };
 
@@ -3954,6 +4249,170 @@ public:
 };
 
 
+class X86PascalCallingConvention : public X86BaseCallingConvention
+{
+public:
+	X86PascalCallingConvention(Architecture* arch) : X86BaseCallingConvention(arch, "pascal") {}
+
+	bool IsNonRegisterArgumentIndirect(BinaryView*, Type* type) override
+	{
+		return type && !type->IsFloat() && type->GetWidth() > 4;
+	}
+
+	bool IsStackAdjustedOnReturn() override
+	{
+		return true;
+	}
+
+	bool AreStackArgumentsPushedLeftToRight() override
+	{
+		return true;
+	}
+
+	Variable GetIndirectReturnValueLocation() override
+	{
+		// Return value pointer is always at the top of the stack (effectively the last parameter
+		// in a left-to-right convention)
+		return Variable::StackOffset(4);
+	}
+
+	std::optional<Variable> GetReturnedIndirectReturnValuePointer() override
+	{
+		return std::nullopt;
+	}
+};
+
+
+class X86PascalRegisterCallingConvention : public X86BaseCallingConvention
+{
+public:
+	X86PascalRegisterCallingConvention(Architecture* arch) : X86BaseCallingConvention(arch, "register") {}
+
+	vector<uint32_t> GetIntegerArgumentRegisters() override
+	{
+		return { XED_REG_EAX, XED_REG_EDX, XED_REG_ECX };
+	}
+
+	bool IsNonRegisterArgumentIndirect(BinaryView*, Type* type) override
+	{
+		return type && !type->IsFloat() && type->GetWidth() > 4;
+	}
+
+	bool AreStackArgumentsPushedLeftToRight() override
+	{
+		return true;
+	}
+
+	std::optional<Variable> GetReturnedIndirectReturnValuePointer() override
+	{
+		return std::nullopt;
+	}
+};
+
+
+class X86GoStackCallingConvention: public CallingConvention
+{
+public:
+	X86GoStackCallingConvention(Architecture* arch): CallingConvention(arch, "go-stack")
+	{
+	}
+
+	bool IsEligibleForHeuristics() override
+	{
+		// This convention cannot be detected by heuristics at this time and will cause issues
+		// with non-Go code.
+		return false;
+	}
+
+	uint32_t GetIntegerReturnValueRegister() override
+	{
+		return BN_INVALID_REGISTER;
+	}
+
+	vector<uint32_t> GetCallerSavedRegisters() override
+	{
+		return vector<uint32_t> { XED_REG_EAX, XED_REG_ECX, XED_REG_EDX, XED_REG_EBX, XED_REG_EBP };
+	}
+
+	RegisterValue GetIncomingFlagValue(uint32_t flag, Function*) override
+	{
+		RegisterValue result;
+		if (flag == IL_FLAG_D)
+		{
+			result.state = ConstantValue;
+			result.value = 0;
+		}
+		return result;
+	}
+
+	ValueLocation GetReturnValueLocation(BinaryView*, const ReturnValue&) override
+	{
+		// It is not possible for this API to determine the return value location on the stack at
+		// this point, return an invalid location and fall back to GetCallLayout.
+		return ValueLocation();
+	}
+
+	CallLayout GetCallLayout(BinaryView* view, const ReturnValue& returnValue, const vector<FunctionParameter>& params,
+		const std::optional<set<uint32_t>>& permittedRegs) override
+	{
+		CallLayout result;
+		result.parameters = GetParameterLocations(view, result.returnValue, params, permittedRegs);
+
+		if (returnValue.type.GetValue() && returnValue.type->GetClass() != VoidTypeClass)
+		{
+			if (returnValue.defaultLocation)
+			{
+				int64_t stackOffset = 4;
+				size_t i = 0;
+				for (auto it = result.parameters.begin(); it != result.parameters.end(); ++i, ++it)
+				{
+					std::optional<int64_t> varStorage;
+					std::optional<uint64_t> varSize;
+					for (auto& component: it->components)
+					{
+						if (component.variable.type != StackVariableSourceType)
+							continue;
+						if (!varStorage.has_value() || component.variable.storage > varStorage.value())
+						{
+							varStorage = component.variable.storage;
+							if (!it->indirect)
+								varSize = component.size;
+						}
+					}
+
+					if (!varStorage.has_value() || varStorage.value() < stackOffset)
+						continue;
+					if (it->indirect)
+						varSize = 4;
+
+					size_t width = 4;
+					if (varSize.has_value())
+						width = varSize.value();
+					else if (i < params.size() && params[i].type.GetValue())
+						width = params[i].type->GetWidth();
+
+					if (width < 4)
+						width = 4;
+					else if ((width % 4) != 0)
+						width += 4 - (width % 4);
+
+					stackOffset = varStorage.value() + width;
+				}
+
+				result.returnValue = Variable::StackOffset(stackOffset);
+			}
+			else
+			{
+				result.returnValue = returnValue.location.GetValue();
+			}
+		}
+
+		result.registerStackAdjustments = GetRegisterStackAdjustments(view, result.returnValue, result.parameters);
+		return result;
+	}
+};
+
+
 class X64BaseCallingConvention: public CallingConvention
 {
 public:
@@ -3986,6 +4445,276 @@ public:
 
 class X64SystemVCallingConvention: public X64BaseCallingConvention
 {
+	enum ValueClass
+	{
+		NoClass,
+		Integer,
+		SSE,
+		SSEUpper,
+		X87,
+		X87Upper,
+		X87Complex
+	};
+
+	struct Component
+	{
+		ValueClass valueClass;
+		uint64_t offset;
+		uint64_t size;
+	};
+
+	std::optional<vector<Component>> GetTypeFields(BinaryView* view, Type* type, std::set<std::string>& visitedTypes)
+	{
+		vector<Component> result;
+		if (!type || type->GetWidth() > 64)
+			return std::nullopt;
+
+		if (type->GetWidth() == 0)
+			return result;
+
+		switch (type->GetClass())
+		{
+		case VoidTypeClass:
+			break;
+		case BoolTypeClass:
+		case IntegerTypeClass:
+		case EnumerationTypeClass:
+		case PointerTypeClass:
+		case WideCharTypeClass:
+			for (uint64_t offset = 0; offset < type->GetWidth(); offset += 8)
+			{
+				if (offset + 8 > type->GetWidth())
+					result.emplace_back(Integer, offset, type->GetWidth() - offset);
+				else
+					result.emplace_back(Integer, offset, 8);
+			}
+			break;
+		case FloatTypeClass:
+			if (type->GetWidth() == 10)
+			{
+				result.emplace_back(X87, 0, 8);
+				result.emplace_back(X87Upper, 8, 2);
+			}
+			else
+			{
+				for (uint64_t offset = 0; offset < type->GetWidth(); offset += 8)
+				{
+					ValueClass valueClass;
+					if (offset == 0)
+						valueClass = SSE;
+					else
+						valueClass = SSEUpper;
+					if (offset + 8 > type->GetWidth())
+						result.emplace_back(valueClass, offset, type->GetWidth() - offset);
+					else
+						result.emplace_back(valueClass, offset, 8);
+				}
+			}
+			break;
+		case StructureTypeClass:
+		{
+			Ref<Structure> structure = type->GetStructure();
+			if (!structure || !view)
+				return std::nullopt;
+			for (auto& member : structure->GetMembersIncludingInherited(view->GetTypeContainer()))
+			{
+				// Ensure that everything is aligned on natural boundaries. If it is not, it is stored in memory.
+				uint64_t alignment = 1;
+				if (member.member.type.GetValue() && member.member.type->GetAlignment() != 0)
+					alignment = member.member.type->GetAlignment();
+				if (member.member.offset % alignment != 0)
+					return std::nullopt;
+
+				std::set<std::string> fieldVisitedTypes = visitedTypes;
+				std::optional<vector<Component>> fieldComponents =
+					GetTypeFields(view, member.member.type.GetValue(), fieldVisitedTypes);
+				if (!fieldComponents.has_value())
+					return std::nullopt;
+				for (auto& component : fieldComponents.value())
+					result.emplace_back(component.valueClass, member.member.offset + component.offset, component.size);
+			}
+			break;
+		}
+		case ArrayTypeClass:
+		{
+			Ref<Type> elementType = type->GetChildType().GetValue();
+			std::optional<std::vector<Component>> elementComponents = GetTypeFields(view, elementType, visitedTypes);
+			if (!elementComponents.has_value() || elementComponents->empty())
+				return std::nullopt;
+			if (type->GetElementCount() > 64)
+				return std::nullopt;
+			for (uint64_t i = 0; i < type->GetElementCount(); i++)
+			{
+				uint64_t offset = i * elementType->GetWidth();
+				for (auto& component : elementComponents.value())
+					result.emplace_back(component.valueClass, offset + component.offset, component.size);
+			}
+			break;
+		}
+		case NamedTypeReferenceClass:
+		{
+			auto ntr = type->GetNamedTypeReference();
+			if (!view || visitedTypes.contains(ntr->GetTypeId()))
+				return std::nullopt;
+			visitedTypes.insert(ntr->GetTypeId());
+			return GetTypeFields(view, view->GetTypeByRef(ntr), visitedTypes);
+		}
+		default:
+			return std::nullopt;
+		}
+		return result;
+	}
+
+	std::optional<std::vector<Component>> GetValueClassificationForType(BinaryView* view, Type* type)
+	{
+		if (!type)
+			return std::nullopt;
+		if (type->GetWidth() > 64)
+			return std::nullopt;
+
+		// Split the component up into fields, with each field split into 8 byte components
+		std::optional<std::vector<Component>> fields;
+		std::set<std::string> visitedTypes;
+		fields = GetTypeFields(view, type, visitedTypes);
+		if (!fields.has_value() || fields->empty())
+			return fields;
+
+		// Initialize components for each 8 bytes of the type. The last component may be smaller than 8 bytes,
+		// but will be padded to fit in an 8-byte component.
+		vector<Component> result;
+		for (uint64_t offset = 0; offset < type->GetWidth(); offset += 8)
+		{
+			if (offset + 8 > type->GetWidth())
+				result.emplace_back(NoClass, offset, type->GetWidth() - offset);
+			else
+				result.emplace_back(NoClass, offset, 8);
+		}
+
+		// Resolve the classes of each component based on the fields
+		for (auto& field : fields.value())
+		{
+			size_t componentIndex = (size_t)(field.offset / 8);
+			if (componentIndex >= result.size())
+				return std::nullopt;
+
+			auto& component = result[componentIndex];
+			if (component.valueClass == field.valueClass)
+			{
+				continue;
+			}
+			if (component.valueClass == NoClass)
+			{
+				component.valueClass = field.valueClass;
+				continue;
+			}
+
+			switch (field.valueClass)
+			{
+			case NoClass:
+				break;
+			case Integer:
+				component.valueClass = Integer;
+				break;
+			case X87:
+			case X87Upper:
+			case X87Complex:
+				return std::nullopt;
+			default:
+				if (component.valueClass != Integer)
+					component.valueClass = SSE;
+				break;
+			}
+		}
+
+		// Any components that are still assigned to NoClass are converted to Integer as a default. This
+		// usually happens when there are chunks of a structure that have no fields defined yet. This is
+		// the most likely class by far, and there isn't any information available to know for sure.
+		for (auto& component : result)
+		{
+			if (component.valueClass == NoClass)
+				component.valueClass = Integer;
+		}
+
+		// The X87Upper class is only valid if preceded by X87 and is only valid for a 16-byte result
+		if (result.size() == 2 && result[0].valueClass == X87 && result[1].valueClass == X87Upper)
+			return result;
+		if (std::ranges::any_of(result, [](const Component& component) { return component.valueClass == X87Upper; }))
+			return std::nullopt;
+
+		// If the result is larger than 16 bytes, it is passed in memory unless it is all SSE, with SSEUpper
+		// as the class for all but the first component.
+		if (result.size() > 2)
+		{
+			if (result[0].valueClass != SSE)
+				return std::nullopt;
+			if (std::any_of(result.begin() + 1, result.end(), [](const Component& component) {
+					return component.valueClass != SSEUpper;
+				}))
+				return std::nullopt;
+			return result;
+		}
+
+		// Clean up SSEUpper components that aren't preceded by an SSE component
+		for (size_t i = 0; i < result.size(); i++)
+		{
+			if (result[i].valueClass != SSEUpper)
+				continue;
+			if (i == 0 || (result[i - 1].valueClass != SSE && result[i - 1].valueClass != SSEUpper))
+				result[i].valueClass = SSE;
+		}
+
+		return result;
+	}
+
+	bool IsTypeRegisterCompatible(BinaryView* view, Type* type, size_t maxIntegerRegs, size_t maxSSERegs,
+		size_t maxX87Regs, size_t maxX87ComplexRegs)
+	{
+		auto components = GetValueClassificationForType(view, type);
+		if (!components.has_value())
+			return false;
+
+		size_t integerCount = 0;
+		size_t sseCount = 0;
+		size_t x87Count = 0;
+		size_t x87ComplexCount = 0;
+		for (auto& component : components.value())
+		{
+			switch (component.valueClass)
+			{
+			case NoClass:
+				return false;
+			case Integer:
+				integerCount++;
+				break;
+			case SSE:
+				sseCount++;
+				break;
+			case X87:
+				x87Count++;
+				break;
+			case X87Complex:
+				x87ComplexCount++;
+				break;
+			case SSEUpper:
+			case X87Upper:
+				break;
+			}
+		}
+
+		if (integerCount > maxIntegerRegs)
+			return false;
+		if (sseCount > maxSSERegs)
+			return false;
+		if (x87Count > maxX87Regs)
+			return false;
+		if (x87ComplexCount % 4 != 0)
+			return false;
+		x87Count += x87ComplexCount / 2;
+		if (x87Count > maxX87ComplexRegs)
+			return false;
+		return true;
+	}
+
 public:
 	X64SystemVCallingConvention(Architecture* arch): X64BaseCallingConvention(arch, "sysv")
 	{
@@ -4015,6 +4744,305 @@ public:
 		return vector<uint32_t> {
 			XED_REG_RBX, XED_REG_RBP,
 			XED_REG_R12, XED_REG_R13, XED_REG_R14, XED_REG_R15 };
+	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView* view, Type* type) override
+	{
+		// If we have an unresolved NTR, use the default handling. We can't really know what
+		// this type is, so just preserve the old behavior.
+		if (type && type->GetClass() == NamedTypeReferenceClass && type->GetWidth() == 0)
+			return DefaultIsReturnTypeRegisterCompatible(type);
+
+		return IsTypeRegisterCompatible(view, type, 2, 2, 1, 2);
+	}
+
+	bool IsArgumentTypeRegisterCompatible(BinaryView* view, Type* type) override
+	{
+		// If we have an unresolved NTR, use the default handling. We can't really know what
+		// this type is, so just preserve the old behavior.
+		if (type && type->GetClass() == NamedTypeReferenceClass && type->GetWidth() == 0)
+			return DefaultIsArgumentTypeRegisterCompatible(type);
+
+		return IsTypeRegisterCompatible(view, type, 6, 8, 0, 0);
+	}
+
+	ValueLocation GetReturnValueLocation(BinaryView* view, const ReturnValue& returnValue) override
+	{
+		Ref<Type> type = returnValue.type.GetValue();
+		if (!type || type->IsVoid())
+			return ValueLocation();
+
+		// If we have an unresolved NTR, use the default handling. We can't really know what
+		// this type is, so just preserve the old behavior.
+		if (type->GetClass() == NamedTypeReferenceClass && type->GetWidth() == 0)
+			return GetDefaultReturnValueLocation(view, returnValue);
+
+		auto components = GetValueClassificationForType(view, type);
+		if (!components.has_value())
+		{
+			// Value doesn't work in a register, return through an indirect pointer
+			return ValueLocation({GetIndirectReturnValueLocation()}, true, GetReturnedIndirectReturnValuePointer());
+		}
+
+		ValueLocation result;
+		size_t integerCount = 0;
+		static constexpr uint32_t integerRegs[2] = {XED_REG_RAX, XED_REG_RDX};
+		size_t sseCount = 0;
+		static constexpr uint32_t sseRegs[2] = {XED_REG_ZMM0, XED_REG_ZMM1};
+		size_t x87Count = 0;
+		static constexpr uint32_t x87Regs[2] = {XED_REG_ST0, XED_REG_ST1};
+		bool valid = true;
+		for (auto& component : components.value())
+		{
+			switch (component.valueClass)
+			{
+			case NoClass:
+				valid = false;
+				break;
+			case Integer:
+				if (integerCount >= 2)
+				{
+					valid = false;
+					break;
+				}
+				result.components.emplace_back(
+					Variable::Register(integerRegs[integerCount++]), component.offset, component.size);
+				break;
+			case SSE:
+				if (sseCount >= 2)
+				{
+					valid = false;
+					break;
+				}
+				result.components.emplace_back(
+					Variable::Register(sseRegs[sseCount++]), component.offset, component.size);
+				break;
+			case X87:
+				if (x87Count >= 1)
+				{
+					valid = false;
+					break;
+				}
+				result.components.emplace_back(
+					Variable::Register(x87Regs[x87Count++]), component.offset, component.size);
+				break;
+			case SSEUpper:
+			case X87Upper:
+				if (result.components.empty())
+				{
+					valid = false;
+					break;
+				}
+				result.components.back().size = result.components.back().size.value_or(0) + component.size;
+				break;
+			case X87Complex:
+				if (result.components.empty() || result.components.back().size.value_or(0) > 8)
+				{
+					if (x87Count >= 2)
+					{
+						valid = false;
+						break;
+					}
+					result.components.emplace_back(
+						Variable::Register(x87Regs[x87Count++]), component.offset, component.size);
+				}
+				else
+				{
+					result.components.back().size = result.components.back().size.value_or(0) + component.size;
+				}
+				break;
+			}
+		}
+
+		// Single component values shouldn't have the size set, otherwise heuristically determined locations
+		// will not match.
+		if (result.components.size() == 1)
+			result.components[0].size.reset();
+
+		if (valid)
+			return result;
+
+		// Value doesn't work in a register, return through an indirect pointer
+		return ValueLocation({GetIndirectReturnValueLocation()}, true, GetReturnedIndirectReturnValuePointer());
+	}
+
+	Variable GetIndirectReturnValueLocation() override { return Variable::Register(XED_REG_RDI); }
+	std::optional<Variable> GetReturnedIndirectReturnValuePointer() override { return Variable::Register(XED_REG_RAX); }
+
+	std::vector<ValueLocation> GetParameterLocations(BinaryView* view, const std::optional<ValueLocation>& returnValue,
+		const std::vector<FunctionParameter>& params,
+		const std::optional<std::set<uint32_t>>& permittedRegs = std::nullopt) override
+	{
+		vector<ValueLocation> result;
+		result.reserve(params.size());
+
+		vector<uint32_t> intArgs = GetIntegerArgumentRegisters();
+		vector<uint32_t> sseArgs = GetFloatArgumentRegisters();
+
+		auto intArgIter = intArgs.begin();
+		auto sseArgIter = sseArgs.begin();
+		size_t addrSize = GetArchitecture()->GetAddressSize();
+		int64_t stackOffset = addrSize;
+
+		if (returnValue.has_value() && returnValue->indirect)
+		{
+			// If the return value is stored as an indirect location parameter, ensure that the normal parameters
+			// don't overlap with it.
+			for (auto& component : returnValue->components)
+			{
+				if (component.variable.type == RegisterVariableSourceType)
+				{
+					if (intArgIter != intArgs.end() && *intArgIter == component.variable.storage)
+						intArgIter++;
+					if (sseArgIter != sseArgs.end() && *sseArgIter == component.variable.storage)
+						sseArgIter++;
+				}
+				else if (component.variable.type == StackVariableSourceType
+					&& component.variable.storage >= stackOffset)
+				{
+					// Adjust the next automatic stack location to after this one
+					stackOffset = component.variable.storage;
+					stackOffset += 8;
+				}
+			}
+		}
+
+		for (auto& param : params)
+		{
+			if (param.locationSource == CustomLocationSource)
+			{
+				// Parameter is not stored in a normal location, use custom variable
+				result.push_back(param.location);
+				for (auto& component : param.location.components)
+				{
+					if (component.variable.type == RegisterVariableSourceType)
+					{
+						// If the non-default location matches the next register in the register parameter
+						// lists, advance the iterators. It may just be a type mismatch, and we still
+						// want to maintain the state for future parameters.
+						if (intArgIter != intArgs.end() && *intArgIter == component.variable.storage)
+							intArgIter++;
+						if (sseArgIter != sseArgs.end() && *sseArgIter == component.variable.storage)
+							sseArgIter++;
+					}
+					else if (component.variable.type == StackVariableSourceType
+						&& component.variable.storage >= stackOffset)
+					{
+						// Adjust the next automatic stack location to after this one
+						stackOffset = component.variable.storage;
+						stackOffset += 8;
+					}
+				}
+				continue;
+			}
+
+			Ref<Type> type = param.type.GetValue();
+			size_t width = type->GetWidth();
+			bool indirect = false;
+
+			if ((type->GetClass() == ArrayTypeClass || param.locationSource == PassByReferenceLocationSource)
+				&& param.locationSource != PassByValueLocationSource)
+			{
+				type = Type::PointerType(GetArchitecture(), type);
+				indirect = true;
+				width = type->GetWidth();
+			}
+
+			if (IsArgumentTypeRegisterCompatible(view, type))
+			{
+				auto components = GetValueClassificationForType(view, type);
+				if (components.has_value() && !components->empty())
+				{
+					// Save off the current register iterators. If we fail to find enough registers, we
+					// need to revert the register allocations.
+					auto savedIntArgIter = intArgIter;
+					auto savedSseArgIter = sseArgIter;
+
+					ValueLocation location;
+					bool valid = true;
+					for (auto& component : components.value())
+					{
+						switch (component.valueClass)
+						{
+						case Integer:
+							if (intArgIter == intArgs.end()
+								|| (permittedRegs.has_value() && !permittedRegs->contains(*intArgIter)))
+							{
+								valid = false;
+								break;
+							}
+							location.components.emplace_back(
+								Variable::Register(*intArgIter), component.offset, component.size);
+							++intArgIter;
+							break;
+						case SSE:
+							if (sseArgIter == sseArgs.end()
+								|| (permittedRegs.has_value() && !permittedRegs->contains(*sseArgIter)))
+							{
+								valid = false;
+								break;
+							}
+							location.components.emplace_back(
+								Variable::Register(*sseArgIter), component.offset, component.size);
+							++sseArgIter;
+							break;
+						case SSEUpper:
+							if (location.components.empty())
+							{
+								valid = false;
+								break;
+							}
+							location.components.back().size =
+								location.components.back().size.value_or(0) + component.size;
+							break;
+						default:
+							valid = false;
+							break;
+						}
+					}
+
+					if (indirect)
+					{
+						location.indirect = true;
+						std::ranges::for_each(location.components, [&](auto& component) {
+							component.size = param.type->GetWidth();
+						});
+					}
+
+					// Single component values shouldn't have the size set, otherwise heuristically determined locations
+					// will not match.
+					if (location.components.size() == 1)
+						location.components[0].size.reset();
+
+					if (valid)
+					{
+						// Value fit in registers
+						result.emplace_back(location);
+						continue;
+					}
+
+					// Value does not fit in available registers, revert to prior available registers
+					intArgIter = savedIntArgIter;
+					sseArgIter = savedSseArgIter;
+				}
+			}
+
+			// Value must be placed on the stack
+			if (width % addrSize != 0)
+				width += addrSize - width % addrSize;
+
+			// Stack offset must be naturally aligned. Alignment is performed on the offset before the
+			// return address is pushed (using caller's stack alignment).
+			int64_t alignment = type->GetAlignment();
+			int64_t afterRetOffset = stackOffset - addrSize;
+			if (alignment != 0 && afterRetOffset % alignment != 0)
+				stackOffset += alignment - afterRetOffset % alignment;
+
+			result.emplace_back(ValueLocation({{Variable::StackOffset(stackOffset), 0}}, indirect));
+			stackOffset += width;
+		}
+
+		return result;
 	}
 };
 
@@ -4060,6 +5088,36 @@ public:
 	{
 		return true;
 	}
+
+	bool IsReturnTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		return type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8;
+	}
+
+	std::optional<Variable> GetReturnedIndirectReturnValuePointer() override
+	{
+		return Variable::Register(XED_REG_RAX);
+	}
+
+	bool IsArgumentTypeRegisterCompatible(BinaryView*, Type* type) override
+	{
+		if (!type)
+			return false;
+		if (type->IsFloat())
+			return true;
+		return type->GetWidth() == 0 || type->GetWidth() == 1 || type->GetWidth() == 2 || type->GetWidth() == 4
+			|| type->GetWidth() == 8;
+	}
+
+	bool IsNonRegisterArgumentIndirect(BinaryView*, Type*) override
+	{
+		return true;
+	}
 };
 
 
@@ -4094,6 +5152,111 @@ public:
 	virtual bool IsEligibleForHeuristics() override
 	{
 		return false;
+	}
+};
+
+
+class X64GoStackCallingConvention: public CallingConvention
+{
+public:
+	X64GoStackCallingConvention(Architecture* arch): CallingConvention(arch, "go-stack")
+	{
+	}
+
+	bool IsEligibleForHeuristics() override
+	{
+		// This convention cannot be detected by heuristics at this time and will cause issues
+		// with non-Go code.
+		return false;
+	}
+
+	uint32_t GetIntegerReturnValueRegister() override
+	{
+		return BN_INVALID_REGISTER;
+	}
+
+	vector<uint32_t> GetCallerSavedRegisters() override
+	{
+		return vector<uint32_t> { XED_REG_RAX, XED_REG_RCX, XED_REG_RDX, XED_REG_RBX, XED_REG_RBP,
+			XED_REG_R8, XED_REG_R9, XED_REG_R10, XED_REG_R11, XED_REG_R12, XED_REG_R13, XED_REG_R14,
+			XED_REG_R15 };
+	}
+
+	RegisterValue GetIncomingFlagValue(uint32_t flag, Function*) override
+	{
+		RegisterValue result;
+		if (flag == IL_FLAG_D)
+		{
+			result.state = ConstantValue;
+			result.value = 0;
+		}
+		return result;
+	}
+
+	ValueLocation GetReturnValueLocation(BinaryView*, const ReturnValue&) override
+	{
+		// It is not possible for this API to determine the return value location on the stack at
+		// this point, return an invalid location and fall back to GetCallLayout.
+		return ValueLocation();
+	}
+
+	CallLayout GetCallLayout(BinaryView* view, const ReturnValue& returnValue, const vector<FunctionParameter>& params,
+		const std::optional<set<uint32_t>>& permittedRegs) override
+	{
+		CallLayout result;
+		result.parameters = GetParameterLocations(view, result.returnValue, params, permittedRegs);
+
+		if (returnValue.type.GetValue() && returnValue.type->GetClass() != VoidTypeClass)
+		{
+			if (returnValue.defaultLocation)
+			{
+				int64_t stackOffset = 8;
+				size_t i = 0;
+				for (auto it = result.parameters.begin(); it != result.parameters.end(); ++i, ++it)
+				{
+					std::optional<int64_t> varStorage;
+					std::optional<uint64_t> varSize;
+					for (auto& component: it->components)
+					{
+						if (component.variable.type != StackVariableSourceType)
+							continue;
+						if (!varStorage.has_value() || component.variable.storage > varStorage.value())
+						{
+							varStorage = component.variable.storage;
+							if (!it->indirect)
+								varSize = component.size;
+						}
+					}
+
+					if (!varStorage.has_value() || varStorage.value() < stackOffset)
+						continue;
+					if (it->indirect)
+						varSize = 8;
+
+					size_t width = 8;
+					if (varSize.has_value())
+						width = varSize.value();
+					else if (i < params.size() && params[i].type.GetValue())
+						width = params[i].type->GetWidth();
+
+					if (width < 8)
+						width = 8;
+					else if ((width % 8) != 0)
+						width += 8 - (width % 8);
+
+					stackOffset = varStorage.value() + width;
+				}
+
+				result.returnValue = Variable::StackOffset(stackOffset);
+			}
+			else
+			{
+				result.returnValue = returnValue.location.GetValue();
+			}
+		}
+
+		result.registerStackAdjustments = GetRegisterStackAdjustments(view, result.returnValue, result.parameters);
+		return result;
 	}
 };
 
@@ -4994,16 +6157,34 @@ extern "C"
 		x86->RegisterCallingConvention(conv);
 		x86->SetDefaultCallingConvention(conv);
 		x86->SetCdeclCallingConvention(conv);
+		conv = new X86SystemVCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
 		conv = new X86StdcallCallingConvention(x86);
 		x86->RegisterCallingConvention(conv);
 		x86->SetStdcallCallingConvention(conv);
+		conv = new X86SystemVStdcallCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
 		conv = new X86RegParmCallingConvention(x86);
 		x86->RegisterCallingConvention(conv);
 		conv = new X86FastcallCallingConvention(x86);
 		x86->RegisterCallingConvention(conv);
+		conv = new X86GCCFastcallCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
+		conv = new X86ClangFastcallCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
 		conv = new X86ThiscallCallingConvention(x86);
 		x86->RegisterCallingConvention(conv);
+		conv = new X86GCCThiscallCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
+		conv = new X86ClangThiscallCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
 		conv = new X86LinuxSystemCallConvention(x86);
+		x86->RegisterCallingConvention(conv);
+		conv = new X86PascalCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
+		conv = new X86PascalRegisterCallingConvention(x86);
+		x86->RegisterCallingConvention(conv);
+		conv = new X86GoStackCallingConvention(x86);
 		x86->RegisterCallingConvention(conv);
 
 		x86->RegisterRelocationHandler("Mach-O", new x86MachoRelocationHandler());
@@ -5021,6 +6202,8 @@ extern "C"
 		conv = new X64WindowsCallingConvention(x64);
 		x64->RegisterCallingConvention(conv);
 		conv = new X64LinuxSystemCallConvention(x64);
+		x64->RegisterCallingConvention(conv);
+		conv = new X64GoStackCallingConvention(x64);
 		x64->RegisterCallingConvention(conv);
 
 		x64->RegisterRelocationHandler("Mach-O", new x64MachoRelocationHandler());

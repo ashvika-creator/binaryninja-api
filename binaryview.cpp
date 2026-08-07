@@ -5728,7 +5728,7 @@ Ref<ExternalLibrary> BinaryView::GetExternalLibrary(const std::string& name)
 	BNExternalLibrary* lib = BNBinaryViewGetExternalLibrary(m_object, name.c_str());
 	if (!lib)
 		return nullptr;
-	return new ExternalLibrary(BNNewExternalLibraryReference(lib));
+	return new ExternalLibrary(lib);
 }
 
 
@@ -5759,7 +5759,7 @@ Ref<ExternalLocation> BinaryView::AddExternalLocation(Ref<Symbol> sourceSymbol, 
 
 	if (!loc)
 		return nullptr;
-	return new ExternalLocation(BNNewExternalLocationReference(loc));
+	return new ExternalLocation(loc);
 }
 
 
@@ -5774,7 +5774,7 @@ Ref<ExternalLocation> BinaryView::GetExternalLocation(Ref<Symbol> sourceSymbol)
 	BNExternalLocation* loc = BNBinaryViewGetExternalLocation(m_object, sourceSymbol->GetObject());
 	if (!loc)
 		return nullptr;
-	return new ExternalLocation(BNNewExternalLocationReference(loc));
+	return new ExternalLocation(loc);
 }
 
 
@@ -5795,32 +5795,102 @@ std::vector<Ref<ExternalLocation>> BinaryView::GetExternalLocations()
 
 Confidence<RegisterValue> BinaryView::GetGlobalPointerValue() const
 {
-	BNRegisterValueWithConfidence value = BNGetGlobalPointerValue(m_object);
-	return Confidence<RegisterValue>(RegisterValue::FromAPIObject(value.value), value.confidence);
+	auto values = GetGlobalPointerValues();
+	if (values.empty())
+		return Confidence<RegisterValue>();
+	return values[0].second;
+}
+
+
+static vector<pair<uint32_t, Confidence<RegisterValue>>> ConvertGlobalPointerValues(
+	BNRegisterValueWithConfidenceAndRegister* values, size_t count)
+{
+	vector<pair<uint32_t, Confidence<RegisterValue>>> result;
+	result.reserve(count);
+	for (size_t i = 0; i < count; i++)
+		result.emplace_back(values[i].reg,
+			Confidence<RegisterValue>(RegisterValue::FromAPIObject(values[i].value.value), values[i].value.confidence));
+	BNFreeRegisterValueWithConfidenceAndRegisterList(values);
+	return result;
+}
+
+
+vector<pair<uint32_t, Confidence<RegisterValue>>> BinaryView::GetGlobalPointerValues() const
+{
+	size_t count;
+	BNRegisterValueWithConfidenceAndRegister* values = BNGetGlobalPointerValues(m_object, &count);
+	return ConvertGlobalPointerValues(values, count);
+}
+
+
+vector<pair<uint32_t, Confidence<RegisterValue>>> BinaryView::GetDefaultGlobalPointerValues() const
+{
+	size_t count;
+	BNRegisterValueWithConfidenceAndRegister* values = BNGetDefaultGlobalPointerValues(m_object, &count);
+	return ConvertGlobalPointerValues(values, count);
+}
+
+
+vector<pair<uint32_t, Confidence<RegisterValue>>> BinaryView::GetUserGlobalPointerValues() const
+{
+	size_t count;
+	BNRegisterValueWithConfidenceAndRegister* values = BNGetUserGlobalPointerValues(m_object, &count);
+	return ConvertGlobalPointerValues(values, count);
 }
 
 
 bool BinaryView::UserGlobalPointerValueSet() const
 {
-	return BNUserGlobalPointerValueSet(m_object);
+	return UserGlobalPointerValuesSet();
+}
+
+
+bool BinaryView::UserGlobalPointerValuesSet() const
+{
+	return BNUserGlobalPointerValuesSet(m_object);
 }
 
 
 void BinaryView::ClearUserGlobalPointerValue()
 {
-	return BNClearUserGlobalPointerValue(m_object);
+	ClearUserGlobalPointerValues();
+}
+
+
+void BinaryView::ClearUserGlobalPointerValues()
+{
+	return BNClearUserGlobalPointerValues(m_object);
 }
 
 
 void BinaryView::SetUserGlobalPointerValue(const Confidence<RegisterValue>& value)
 {
-	BNRegisterValueWithConfidence v;
-	v.confidence = value.GetConfidence();
-	v.value.value = value.GetValue().value;
-	v.value.state = value.GetValue().state;
-	v.value.size = value.GetValue().size;
-	v.value.offset = value.GetValue().offset;
-	BNSetUserGlobalPointerValue(m_object, v);
+	vector<pair<uint32_t, Confidence<RegisterValue>>> values;
+	for (auto& [reg, _] : GetGlobalPointerValues())
+		if (reg != BN_INVALID_REGISTER)
+			values.emplace_back(reg, value);
+	if (values.empty())
+		values.emplace_back(BN_INVALID_REGISTER, value);
+	SetUserGlobalPointerValues(values);
+}
+
+
+void BinaryView::SetUserGlobalPointerValues(const vector<pair<uint32_t, Confidence<RegisterValue>>>& values)
+{
+	vector<BNRegisterValueWithConfidenceAndRegister> apiValues;
+	apiValues.reserve(values.size());
+	for (auto& [reg, value] : values)
+	{
+		BNRegisterValueWithConfidenceAndRegister v;
+		v.reg = reg;
+		v.value.confidence = value.GetConfidence();
+		v.value.value.value = value.GetValue().value;
+		v.value.value.state = value.GetValue().state;
+		v.value.value.size = value.GetValue().size;
+		v.value.value.offset = value.GetValue().offset;
+		apiValues.push_back(v);
+	}
+	BNSetUserGlobalPointerValues(m_object, apiValues.data(), apiValues.size());
 }
 
 
@@ -5844,6 +5914,26 @@ Ref<Relocation> BinaryView::GetNextRelocation(uint64_t addr, uint64_t maxAddr)
 		return nullptr;
 
 	return new Relocation(reloc);
+}
+
+
+vector<FunctionParameter> BinaryView::DerefParameterNamedTypeRefs(const vector<FunctionParameter>& params)
+{
+	vector<FunctionParameter> result;
+	result.reserve(params.size());
+	for (auto& i : params)
+		result.emplace_back(i.name, i.type->DerefNamedTypeReference(this)->WithConfidence(i.type.GetConfidence()),
+			i.locationSource, i.location);
+	return result;
+}
+
+
+ReturnValue BinaryView::DerefReturnValueNamedTypeRefs(const ReturnValue& returnValue)
+{
+	ReturnValue result = returnValue;
+	if (result.type.GetValue())
+		result.type.SetValue(result.type->DerefNamedTypeReference(this));
+	return result;
 }
 
 

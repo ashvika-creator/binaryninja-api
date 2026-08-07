@@ -60,6 +60,7 @@ static constexpr std::array s_operandTypeForUsage = {
 	OperandUsageType{DestVariableHighLevelOperandUsage, VariableHighLevelOperand},
 	OperandUsageType{SSAVariableHighLevelOperandUsage, SSAVariableHighLevelOperand},
 	OperandUsageType{DestSSAVariableHighLevelOperandUsage, SSAVariableHighLevelOperand},
+	OperandUsageType{PartialSSAVariableSourceHighLevelOperandUsage, SSAVariableHighLevelOperand},
 	OperandUsageType{DestExprHighLevelOperandUsage, ExprHighLevelOperand},
 	OperandUsageType{LeftExprHighLevelOperandUsage, ExprHighLevelOperand},
 	OperandUsageType{RightExprHighLevelOperandUsage, ExprHighLevelOperand},
@@ -113,6 +114,12 @@ struct HighLevelILOperationTraits
 
 	static constexpr uint8_t GetOperandIndexAdvance(OperandUsage usage, size_t /* operandIndex */)
 	{
+		if (usage == PartialSSAVariableSourceHighLevelOperandUsage)
+		{
+			// SSA variables are usually two slots, but this one has previously defined
+			// variables and thus only takes one slot
+			return 1;
+		}
 		switch (OperandTypeForUsage(usage))
 		{
 		case SSAVariableHighLevelOperand:
@@ -159,6 +166,8 @@ static constexpr std::array s_instructionOperandUsage = {
 	OperandUsage{HLIL_DEREF, {SourceExprHighLevelOperandUsage}},
 	OperandUsage{HLIL_DEREF_FIELD, {SourceExprHighLevelOperandUsage, OffsetHighLevelOperandUsage, MemberIndexHighLevelOperandUsage}},
 	OperandUsage{HLIL_ADDRESS_OF, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_PASS_BY_REF, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_RETURN_BY_REF, {SourceExprHighLevelOperandUsage}},
 	OperandUsage{HLIL_CONST, {ConstantHighLevelOperandUsage}},
 	OperandUsage{HLIL_CONST_DATA, {ConstantDataHighLevelOperandUsage}},
 	OperandUsage{HLIL_CONST_PTR, {ConstantHighLevelOperandUsage}},
@@ -250,6 +259,7 @@ static constexpr std::array s_instructionOperandUsage = {
 	OperandUsage{HLIL_FORCE_VER_SSA, {DestSSAVariableHighLevelOperandUsage, SSAVariableHighLevelOperandUsage}},
 	OperandUsage{HLIL_ASSERT_SSA, {SSAVariableHighLevelOperandUsage, ConstantHighLevelOperandUsage}},
 	OperandUsage{HLIL_VAR_SSA, {SSAVariableHighLevelOperandUsage}},
+	OperandUsage{HLIL_VAR_SSA_PARTIAL, {SSAVariableHighLevelOperandUsage, PartialSSAVariableSourceHighLevelOperandUsage}},
 	OperandUsage{HLIL_ARRAY_INDEX_SSA, {SourceExprHighLevelOperandUsage, SourceMemoryVersionHighLevelOperandUsage, IndexExprHighLevelOperandUsage}},
 	OperandUsage{HLIL_DEREF_SSA, {SourceExprHighLevelOperandUsage, SourceMemoryVersionHighLevelOperandUsage}},
 	OperandUsage{HLIL_DEREF_FIELD_SSA, {SourceExprHighLevelOperandUsage, SourceMemoryVersionHighLevelOperandUsage, OffsetHighLevelOperandUsage, MemberIndexHighLevelOperandUsage}},
@@ -258,6 +268,17 @@ static constexpr std::array s_instructionOperandUsage = {
 	OperandUsage{HLIL_INTRINSIC_SSA, {IntrinsicHighLevelOperandUsage, ParameterExprsHighLevelOperandUsage, DestMemoryVersionHighLevelOperandUsage, SourceMemoryVersionHighLevelOperandUsage}},
 	OperandUsage{HLIL_VAR_PHI, {DestSSAVariableHighLevelOperandUsage, SourceSSAVariablesHighLevelOperandUsage}},
 	OperandUsage{HLIL_MEM_PHI, {DestMemoryVersionHighLevelOperandUsage, SourceMemoryVersionsHighLevelOperandUsage}},
+	OperandUsage{HLIL_BSWAP, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_POPCNT, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_CLZ, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_CTZ, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_RBIT, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_CLS, {SourceExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_MINS, {LeftExprHighLevelOperandUsage, RightExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_MAXS, {LeftExprHighLevelOperandUsage, RightExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_MINU, {LeftExprHighLevelOperandUsage, RightExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_MAXU, {LeftExprHighLevelOperandUsage, RightExprHighLevelOperandUsage}},
+	OperandUsage{HLIL_ABS, {SourceExprHighLevelOperandUsage}},
 };
 
 
@@ -473,6 +494,16 @@ HighLevelILInstructionList::operator vector<HighLevelILInstruction>() const
 	result.reserve(size());
 	for (auto i : *this)
 		result.push_back(i);
+	return result;
+}
+
+
+HighLevelILInstructionList::operator vector<ExprId>() const
+{
+	vector<ExprId> result;
+	result.reserve(size());
+	for (auto i : *this)
+		result.push_back(i.exprIndex);
 	return result;
 }
 
@@ -790,6 +821,12 @@ Variable HighLevelILInstructionBase::GetRawOperandAsVariable(size_t operand) con
 SSAVariable HighLevelILInstructionBase::GetRawOperandAsSSAVariable(size_t operand) const
 {
 	return SSAVariable(Variable::FromIdentifier(operands[operand]), (size_t)operands[operand + 1]);
+}
+
+
+SSAVariable HighLevelILInstructionBase::GetRawOperandAsPartialSSAVariableSource(size_t operand) const
+{
+	return SSAVariable(Variable::FromIdentifier(operands[operand]), (size_t)operands[operand + 2]);
 }
 
 
@@ -1249,6 +1286,13 @@ void HighLevelILInstruction::CollectSubExprs(stack<size_t>& toProcess) const
 	case HLIL_ADDRESS_OF:
 	case HLIL_NEG:
 	case HLIL_NOT:
+	case HLIL_BSWAP:
+	case HLIL_POPCNT:
+	case HLIL_CLZ:
+	case HLIL_CTZ:
+	case HLIL_RBIT:
+	case HLIL_CLS:
+	case HLIL_ABS:
 	case HLIL_SX:
 	case HLIL_ZX:
 	case HLIL_LOW_PART:
@@ -1265,6 +1309,8 @@ void HighLevelILInstruction::CollectSubExprs(stack<size_t>& toProcess) const
 	case HLIL_FLOOR:
 	case HLIL_CEIL:
 	case HLIL_FTRUNC:
+	case HLIL_PASS_BY_REF:
+	case HLIL_RETURN_BY_REF:
 		toProcess.push(AsOneOperand().GetSourceExpr().exprIndex);
 		break;
 	case HLIL_ADD:
@@ -1272,6 +1318,10 @@ void HighLevelILInstruction::CollectSubExprs(stack<size_t>& toProcess) const
 	case HLIL_AND:
 	case HLIL_OR:
 	case HLIL_XOR:
+	case HLIL_MINS:
+	case HLIL_MAXS:
+	case HLIL_MINU:
+	case HLIL_MAXU:
 	case HLIL_LSL:
 	case HLIL_LSR:
 	case HLIL_ASR:
@@ -1492,6 +1542,10 @@ ExprId HighLevelILInstruction::CopyTo(
 		return dest->Var(size, GetVariable<HLIL_VAR>(), loc);
 	case HLIL_VAR_SSA:
 		return dest->VarSSA(size, GetSSAVariable<HLIL_VAR_SSA>(), loc);
+	case HLIL_VAR_SSA_PARTIAL:
+		return dest->VarSSAPartial(size, GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>().var,
+			GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>().version,
+			GetSourceSSAVariable<HLIL_VAR_SSA_PARTIAL>().version, loc);
 	case HLIL_VAR_PHI:
 		return dest->VarPhi(GetDestSSAVariable<HLIL_VAR_PHI>(), GetSourceSSAVariables<HLIL_VAR_PHI>(), loc);
 	case HLIL_MEM_PHI:
@@ -1555,6 +1609,13 @@ ExprId HighLevelILInstruction::CopyTo(
 		return dest->Unreachable(loc);
 	case HLIL_NEG:
 	case HLIL_NOT:
+	case HLIL_BSWAP:
+	case HLIL_POPCNT:
+	case HLIL_CLZ:
+	case HLIL_CTZ:
+	case HLIL_RBIT:
+	case HLIL_CLS:
+	case HLIL_ABS:
 	case HLIL_SX:
 	case HLIL_ZX:
 	case HLIL_LOW_PART:
@@ -1571,12 +1632,18 @@ ExprId HighLevelILInstruction::CopyTo(
 	case HLIL_FLOOR:
 	case HLIL_CEIL:
 	case HLIL_FTRUNC:
+	case HLIL_PASS_BY_REF:
+	case HLIL_RETURN_BY_REF:
 		return dest->AddExprWithLocation(operation, loc, size, subExprHandler(AsOneOperand().GetSourceExpr()));
 	case HLIL_ADD:
 	case HLIL_SUB:
 	case HLIL_AND:
 	case HLIL_OR:
 	case HLIL_XOR:
+	case HLIL_MINS:
+	case HLIL_MAXS:
+	case HLIL_MINU:
+	case HLIL_MAXU:
 	case HLIL_LSL:
 	case HLIL_LSR:
 	case HLIL_ASR:
@@ -1876,6 +1943,16 @@ bool HighLevelILInstruction::operator<(const HighLevelILInstruction& other) cons
 		if (size > other.size)
 			return false;
 		return GetSSAVariable<HLIL_VAR_SSA>() < other.GetSSAVariable<HLIL_VAR_SSA>();
+	case HLIL_VAR_SSA_PARTIAL:
+		if (size < other.size)
+			return true;
+		if (size > other.size)
+			return false;
+		if (GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>() < other.GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>())
+			return true;
+		if (other.GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>() < GetDestSSAVariable<HLIL_VAR_SSA_PARTIAL>())
+			return false;
+		return GetSourceSSAVariable<HLIL_VAR_SSA_PARTIAL>() < other.GetSourceSSAVariable<HLIL_VAR_SSA_PARTIAL>();
 	case HLIL_STRUCT_FIELD:
 		if (size < other.size)
 			return true;
@@ -2039,6 +2116,10 @@ bool HighLevelILInstruction::operator<(const HighLevelILInstruction& other) cons
 	case HLIL_AND:
 	case HLIL_OR:
 	case HLIL_XOR:
+	case HLIL_MINS:
+	case HLIL_MAXS:
+	case HLIL_MINU:
+	case HLIL_MAXU:
 	case HLIL_LSL:
 	case HLIL_LSR:
 	case HLIL_ASR:
@@ -2114,6 +2195,13 @@ bool HighLevelILInstruction::operator<(const HighLevelILInstruction& other) cons
 	case HLIL_DEREF:
 	case HLIL_NEG:
 	case HLIL_NOT:
+	case HLIL_BSWAP:
+	case HLIL_POPCNT:
+	case HLIL_CLZ:
+	case HLIL_CTZ:
+	case HLIL_RBIT:
+	case HLIL_CLS:
+	case HLIL_ABS:
 	case HLIL_SX:
 	case HLIL_ZX:
 	case HLIL_LOW_PART:
@@ -2129,6 +2217,8 @@ bool HighLevelILInstruction::operator<(const HighLevelILInstruction& other) cons
 	case HLIL_FLOOR:
 	case HLIL_CEIL:
 	case HLIL_FTRUNC:
+	case HLIL_PASS_BY_REF:
+	case HLIL_RETURN_BY_REF:
 		if (size < other.size)
 			return true;
 		if (size > other.size)
@@ -2259,6 +2349,15 @@ SSAVariable HighLevelILInstruction::GetDestSSAVariable() const
 	if (GetOperandIndexForUsage(DestSSAVariableHighLevelOperandUsage, operandIndex))
 		return GetRawOperandAsSSAVariable(operandIndex);
 	throw HighLevelILInstructionAccessException();
+}
+
+
+SSAVariable HighLevelILInstruction::GetSourceSSAVariable() const
+{
+	size_t operandIndex;
+	if (GetOperandIndexForUsage(PartialSSAVariableSourceHighLevelOperandUsage, operandIndex))
+		return GetRawOperandAsPartialSSAVariableSource(operandIndex - 2);
+	throw MediumLevelILInstructionAccessException();
 }
 
 
@@ -2769,6 +2868,13 @@ ExprId HighLevelILFunction::VarSSA(size_t size, const SSAVariable& src, const IL
 }
 
 
+ExprId HighLevelILFunction::VarSSAPartial(size_t size, const Variable& dest, size_t newVersion, size_t prevVersion,
+	const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_VAR_SSA_PARTIAL, loc, size, dest.ToIdentifier(), newVersion, prevVersion);
+}
+
+
 ExprId HighLevelILFunction::VarPhi(
     const SSAVariable& dest, const vector<SSAVariable>& sources, const ILSourceLocation& loc)
 {
@@ -2838,6 +2944,18 @@ ExprId HighLevelILFunction::DerefFieldSSA(
 ExprId HighLevelILFunction::AddressOf(ExprId src, const ILSourceLocation& loc)
 {
 	return AddExprWithLocation(HLIL_ADDRESS_OF, loc, 0, src);
+}
+
+
+ExprId HighLevelILFunction::PassByRef(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_PASS_BY_REF, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::ReturnByRef(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_RETURN_BY_REF, loc, size, src);
 }
 
 
@@ -3064,6 +3182,72 @@ ExprId HighLevelILFunction::Neg(size_t size, ExprId src, const ILSourceLocation&
 ExprId HighLevelILFunction::Not(size_t size, ExprId src, const ILSourceLocation& loc)
 {
 	return AddExprWithLocation(HLIL_NOT, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::ByteSwap(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_BSWAP, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::PopulationCount(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_POPCNT, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::CountLeadingZeros(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_CLZ, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::CountTrailingZeros(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_CTZ, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::ReverseBits(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_RBIT, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::CountLeadingSigns(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_CLS, loc, size, src);
+}
+
+
+ExprId HighLevelILFunction::MinSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_MINS, loc, size, left, right);
+}
+
+
+ExprId HighLevelILFunction::MaxSigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_MAXS, loc, size, left, right);
+}
+
+
+ExprId HighLevelILFunction::MinUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_MINU, loc, size, left, right);
+}
+
+
+ExprId HighLevelILFunction::MaxUnsigned(size_t size, ExprId left, ExprId right, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_MAXU, loc, size, left, right);
+}
+
+
+ExprId HighLevelILFunction::AbsoluteValue(size_t size, ExprId src, const ILSourceLocation& loc)
+{
+	return AddExprWithLocation(HLIL_ABS, loc, size, src);
 }
 
 

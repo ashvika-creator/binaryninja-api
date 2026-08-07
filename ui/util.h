@@ -22,7 +22,13 @@ std::string BINARYNINJAUIAPI getStringForRegisterValue(ArchitectureRef arch, Bin
 std::string BINARYNINJAUIAPI getPossibleValueSetStateName(BNRegisterValueType state);
 std::string BINARYNINJAUIAPI getStringForIntegerValue(int64_t value);
 std::string BINARYNINJAUIAPI getStringForUIntegerValue(uint64_t value);
+bool BINARYNINJAUIAPI canDisplayIntegerTokenAs(const HighlightTokenState& token, BNIntegerDisplayType displayType);
 BNIntegerDisplayType BINARYNINJAUIAPI getInvertedIntegerDisplayType(BNIntegerDisplayType displayType, const std::string& text);
+BNIntegerDisplayType BINARYNINJAUIAPI getToggledIntegerRadixDisplayType(BNIntegerDisplayType displayType, const std::string& text);
+BNIntegerDisplayType BINARYNINJAUIAPI getToggledIntegerComplementDisplayType(BNIntegerDisplayType displayType, const std::string& text);
+TypeRef BINARYNINJAUIAPI getIntegerTypePreservingDisplay(TypeRef type, size_t width, BinaryNinja::Confidence<bool> isSigned);
+TypeRef BINARYNINJAUIAPI getIntegerTypeWithWidthPreservingAttributes(TypeRef type, size_t width);
+TypeRef BINARYNINJAUIAPI getIntegerTypeWithSignPreservingAttributes(TypeRef type, BinaryNinja::Confidence<bool> isSigned);
 std::string BINARYNINJAUIAPI getStringForPossibleValueSet(ArchitectureRef arch, const BinaryNinja::PossibleValueSet& values, bool pretty = true);
 std::string BINARYNINJAUIAPI getStringForInstructionDataflowDetails(BinaryViewRef data, ArchitectureRef arch, FunctionRef func, uint64_t address);
 std::optional<BinaryNinja::PossibleValueSet> BINARYNINJAUIAPI getPossibleValueSetForToken(View* view, BinaryViewRef data, ArchitectureRef arch,
@@ -30,6 +36,7 @@ std::optional<BinaryNinja::PossibleValueSet> BINARYNINJAUIAPI getPossibleValueSe
 
 std::optional<BinaryNinja::PossibleValueSet> BINARYNINJAUIAPI getPossibleValueSetForILToken(View* view, HighlightTokenState token);
 std::optional<uint64_t> BINARYNINJAUIAPI getAddressOfILTokenExpr(View* view, HighlightTokenState token);
+void BINARYNINJAUIAPI setCallStackAdjustment(QWidget* parent, FunctionRef func, ArchitectureRef arch, uint64_t instrAddress);
 
 // Resolve the address of the call instruction that the user is currently on,
 // given the active function, architecture, IL view, highlight, and cursor

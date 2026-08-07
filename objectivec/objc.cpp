@@ -6,6 +6,10 @@
 
 #define RELEASE_ASSERT(condition) ((condition) ? (void)0 : (std::abort(), (void)0))
 
+#define MAX_PROTOCOL_COUNT 0x1000
+#define MAX_METHOD_LIST_COUNT 0x1000
+#define MAX_IVAR_LIST_COUNT 0x1000
+
 using namespace BinaryNinja;
 
 namespace {
@@ -847,6 +851,11 @@ void ObjCProcessor::LoadProtocols(ObjCReader* reader, Ref<Section> listSection)
 				"protoProtocols_" + protocolName, protocol.protocols, true);
 			reader->Seek(protocol.protocols);
 			uint32_t count = reader->Read64();
+			if (count > MAX_PROTOCOL_COUNT)
+			{
+				m_logger->LogWarn("List of protocols at 0x%llx has too large a count of 0x%x, skipping...", protocol.protocols, count);
+				continue;
+			}
 			view_ptr_t addr = reader->GetOffset();
 			for (uint32_t j = 0; j < count; j++)
 			{
@@ -928,7 +937,7 @@ void ObjCProcessor::ReadListOfMethodLists(ObjCReader* reader, ClassBase& cls, st
 	head.entsizeAndFlags = reader->Read32();
 	head.count = reader->Read32();
 
-	if (head.count > 0x1000)
+	if (head.count > MAX_METHOD_LIST_COUNT)
 	{
 		m_logger->LogError("List of method lists at 0x%llx has an invalid count of 0x%x", start, head.count);
 		return;
@@ -962,7 +971,7 @@ void ObjCProcessor::ReadMethodList(ObjCReader* reader, ClassBase& cls, std::stri
 	head.entsizeAndFlags = reader->Read32();
 	head.count = reader->Read32();
 
-	if (head.count > 0x1000)
+	if (head.count > MAX_METHOD_LIST_COUNT)
 	{
 		m_logger->LogError("Method list at 0x%llx has an invalid count of 0x%x", start, head.count);
 		return;
@@ -1066,6 +1075,11 @@ void ObjCProcessor::ReadIvarList(ObjCReader* reader, ClassBase& cls, std::string
 	ivar_list_t head;
 	head.entsizeAndFlags = reader->Read32();
 	head.count = reader->Read32();
+	if (head.count > MAX_IVAR_LIST_COUNT)
+	{
+		m_logger->LogWarn("Ivar list at 0x%llx has an invalid count of 0x%x, skipping..", start, head.count);
+		return;
+	}
 	auto addressSize = m_data->GetAddressSize();
 	DefineObjCSymbol(DataSymbol, m_typeNames.ivarList, "ivar_list_" + std::string(name), start, true);
 	for (unsigned i = 0; i < head.count; i++)
@@ -1256,9 +1270,9 @@ bool ObjCProcessor::ApplyMethodType(Class& cls, Method& method, bool isInstanceM
 		cls.associatedName.IsEmpty() ?
 			m_types.id :
 			Type::PointerType(m_data->GetAddressSize(), Type::NamedType(m_data, cls.associatedName)),
-		true, BinaryNinja::Variable()});
+		DefaultLocationSource, BinaryNinja::Variable()});
 
-	params.push_back({"sel", m_types.sel, true, BinaryNinja::Variable()});
+	params.push_back({"sel", m_types.sel, DefaultLocationSource, BinaryNinja::Variable()});
 
 	for (size_t i = 3; i < typeTokens.size(); i++)
 	{
@@ -1268,7 +1282,7 @@ bool ObjCProcessor::ApplyMethodType(Class& cls, Method& method, bool isInstanceM
 		else
 			name = "arg";
 
-		params.push_back({std::move(name), typeForQualifiedNameOrType(typeTokens[i]), true, BinaryNinja::Variable()});
+		params.push_back({std::move(name), typeForQualifiedNameOrType(typeTokens[i]), DefaultLocationSource, BinaryNinja::Variable()});
 	}
 
 	auto funcType = BinaryNinja::Type::FunctionType(retType, cc, params);
@@ -1679,12 +1693,18 @@ void ObjCProcessor::ProcessCFStrings()
 		{
 			reader->Seek(i + ptrSize);
 			uint64_t flags = reader->ReadPointer();
-			auto strLoc = ReadPointerAccountingForRelocations(reader.get());
-			auto size = reader->ReadPointer();
+			const auto strLoc = ReadPointerAccountingForRelocations(reader.get());
+			const auto strLen = reader->ReadPointer();
 			std::string str;
 			if (flags & 0b10000)  // UTF16
 			{
-				auto data = m_data->ReadBuffer(strLoc, size * 2);
+				const auto strSize = strLen * 2;
+				if (!m_data->IsValidOffset(strLoc + strSize))
+				{
+					m_logger->LogWarn("CFString at 0x%llx has invalid length 0x%llx, skipping...", i, strLen);
+					continue;
+				}
+				auto data = m_data->ReadBuffer(strLoc, strSize);
 
 				str = "";
 				for (uint64_t bufferOff = 0; bufferOff + 1 < data.GetLength(); bufferOff += 2)
@@ -1710,14 +1730,14 @@ void ObjCProcessor::ProcessCFStrings()
 					}
 				}
 				DefineObjCSymbol(
-					DataSymbol, Type::ArrayType(Type::WideCharType(2), size + 1), "ustr_" + str, strLoc, true);
+					DataSymbol, Type::ArrayType(Type::WideCharType(2), strLen + 1), "ustr_" + str, strLoc, true);
 				DefineObjCSymbol(
 					DataSymbol, Type::NamedType(m_data, m_typeNames.cfStringUTF16), "cfstr_" + str, i, true);
 			}
 			else  // UTF8 / ASCII
 			{
 				reader->Seek(strLoc);
-				std::string rawStr = reader->ReadCString(size + 1);
+				std::string rawStr = reader->ReadCString(strLen + 1);
 				str = "";
 				for (signed char c : rawStr)
 				{

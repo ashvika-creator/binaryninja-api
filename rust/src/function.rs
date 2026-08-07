@@ -21,6 +21,7 @@ use crate::{
     calling_convention::CoreCallingConvention,
     component::Component,
     disassembly::{DisassemblySettings, DisassemblyTextLine},
+    ffi::slice_from_raw_parts,
     flowgraph::FlowGraph,
     medium_level_il::FunctionGraphType,
     platform::Platform,
@@ -28,7 +29,7 @@ use crate::{
     string::*,
     symbol::{Binding, Symbol},
     tags::{Tag, TagReference, TagType},
-    types::{IntegerDisplayType, QualifiedName, Type},
+    types::{IntegerDisplayType, QualifiedName, ReturnValue, Type, ValueLocation},
 };
 use crate::{data_buffer::DataBuffer, disassembly::InstructionTextToken, rc::*};
 pub use binaryninjacore_sys::BNAnalysisSkipReason as AnalysisSkipReason;
@@ -510,6 +511,15 @@ impl Function {
         unsafe { Array::new(lines, count, ()) }
     }
 
+    pub fn block_sort_hint(&self, addr: u64, arch: Option<CoreArchitecture>) -> Option<i64> {
+        let arch = arch.unwrap_or_else(|| self.arch());
+        let mut result = 0;
+        unsafe {
+            BNGetFunctionBlockSortHint(self.handle, arch.handle, addr, &mut result)
+                .then_some(result)
+        }
+    }
+
     pub fn variable_name(&self, var: &Variable) -> String {
         unsafe {
             let raw_var = BNVariable::from(var);
@@ -649,6 +659,11 @@ impl Function {
         Conf::<Ref<Type>>::from_owned_raw(raw_return_type)
     }
 
+    pub fn return_value(&self) -> ReturnValue {
+        let raw_return_value = unsafe { BNGetFunctionReturnValue(self.handle) };
+        ReturnValue::from_owned_core_raw(raw_return_value)
+    }
+
     pub fn set_auto_return_type<'a, C>(&self, return_type: C)
     where
         C: Into<Conf<&'a Type>>,
@@ -657,12 +672,44 @@ impl Function {
         unsafe { BNSetAutoFunctionReturnType(self.handle, &mut raw_return_type) }
     }
 
+    pub fn set_auto_is_return_value_default_location(&self, is_default: bool) {
+        unsafe { BNSetAutoIsFunctionReturnValueDefaultLocation(self.handle, is_default) }
+    }
+
+    pub fn set_auto_return_value_location(&self, location: impl Into<Conf<ValueLocation>>) {
+        let mut raw_location = Conf::<ValueLocation>::into_rust_raw(location.into());
+        unsafe { BNSetAutoFunctionReturnValueLocation(self.handle, &mut raw_location) };
+        Conf::<ValueLocation>::free_rust_raw(raw_location);
+    }
+
+    pub fn set_auto_return_value(&self, return_value: impl Into<ReturnValue>) {
+        let mut raw_return_value = ReturnValue::into_rust_raw(&return_value.into());
+        unsafe { BNSetAutoFunctionReturnValue(self.handle, &mut raw_return_value) }
+        ReturnValue::free_rust_raw(raw_return_value);
+    }
+
     pub fn set_user_return_type<'a, C>(&self, return_type: C)
     where
         C: Into<Conf<&'a Type>>,
     {
         let mut raw_return_type = Conf::<&Type>::into_raw(return_type.into());
         unsafe { BNSetUserFunctionReturnType(self.handle, &mut raw_return_type) }
+    }
+
+    pub fn set_user_is_return_value_default_location(&self, is_default: bool) {
+        unsafe { BNSetUserIsFunctionReturnValueDefaultLocation(self.handle, is_default) }
+    }
+
+    pub fn set_user_return_value_location(&self, location: impl Into<Conf<ValueLocation>>) {
+        let mut raw_location = Conf::<ValueLocation>::into_rust_raw(location.into());
+        unsafe { BNSetUserFunctionReturnValueLocation(self.handle, &mut raw_location) };
+        Conf::<ValueLocation>::free_rust_raw(raw_location);
+    }
+
+    pub fn set_user_return_value(&self, return_value: impl Into<ReturnValue>) {
+        let mut raw_return_value = ReturnValue::into_rust_raw(&return_value.into());
+        unsafe { BNSetUserFunctionReturnValue(self.handle, &mut raw_return_value) }
+        ReturnValue::free_rust_raw(raw_return_value);
     }
 
     pub fn function_type(&self) -> Ref<Type> {
@@ -1009,38 +1056,61 @@ impl Function {
         }
     }
 
-    pub fn set_user_parameter_variables<I>(&self, values: I, confidence: u8)
-    where
-        I: IntoIterator<Item = Variable>,
-    {
-        let vars: Vec<BNVariable> = values.into_iter().map(Into::into).collect();
+    pub fn parameter_locations(&self) -> Conf<Vec<ValueLocation>> {
         unsafe {
-            BNSetUserFunctionParameterVariables(
-                self.handle,
-                &mut BNParameterVariablesWithConfidence {
-                    vars: vars.as_ptr() as *mut _,
-                    count: vars.len(),
-                    confidence,
-                },
-            )
+            let mut raw_locations = BNGetFunctionParameterLocations(self.handle);
+            let raw_location_list =
+                slice_from_raw_parts(raw_locations.locations, raw_locations.count);
+            let locations: Vec<ValueLocation> = raw_location_list
+                .iter()
+                .map(ValueLocation::from_raw)
+                .collect();
+            let confidence = raw_locations.confidence;
+            BNFreeParameterLocations(&mut raw_locations);
+            Conf::new(locations, confidence)
         }
     }
 
-    pub fn set_auto_parameter_variables<I>(&self, values: I, confidence: u8)
+    pub fn set_user_parameter_locations<I>(&self, values: I, confidence: u8)
     where
-        I: IntoIterator<Item = Variable>,
+        I: IntoIterator<Item = ValueLocation>,
     {
-        let vars: Vec<BNVariable> = values.into_iter().map(Into::into).collect();
+        let locations: Vec<BNValueLocation> = values
+            .into_iter()
+            .map(|location| ValueLocation::into_rust_raw(&location))
+            .collect();
         unsafe {
-            BNSetAutoFunctionParameterVariables(
+            BNSetUserFunctionParameterLocations(
                 self.handle,
-                &mut BNParameterVariablesWithConfidence {
-                    vars: vars.as_ptr() as *mut _,
-                    count: vars.len(),
+                &mut BNValueLocationListWithConfidence {
+                    locations: locations.as_ptr() as *mut _,
+                    count: locations.len(),
                     confidence,
                 },
             )
         }
+        locations.into_iter().for_each(ValueLocation::free_rust_raw);
+    }
+
+    pub fn set_auto_parameter_locations<I>(&self, values: I, confidence: u8)
+    where
+        I: IntoIterator<Item = ValueLocation>,
+    {
+        let locations: Vec<BNValueLocation> = values
+            .into_iter()
+            .map(|location| ValueLocation::into_rust_raw(&location))
+            .collect();
+        unsafe {
+            BNSetAutoFunctionParameterLocations(
+                self.handle,
+                &mut BNValueLocationListWithConfidence {
+                    locations: locations.as_ptr() as *mut _,
+                    count: locations.len(),
+                    confidence,
+                },
+            )
+        }
+        locations.into_iter().for_each(ValueLocation::free_rust_raw);
     }
 
     pub fn parameter_at(
@@ -2160,10 +2230,44 @@ impl Function {
         unsafe { Array::new(refs, count, ()) }
     }
 
+    /// Deprecated. Use [`Function::global_pointer_values`] instead.
+    ///
     /// Discovered value of the global pointer register, if the function uses one
     pub fn global_pointer_value(&self) -> Conf<RegisterValue> {
-        let result = unsafe { BNGetFunctionGlobalPointerValue(self.handle) };
-        Conf::new(result.value.into(), result.confidence)
+        self.global_pointer_values()
+            .into_iter()
+            .next()
+            .map(|(_, value)| value)
+            .unwrap_or_else(|| {
+                Conf::new(
+                    RegisterValue::new(RegisterValueType::UndeterminedValue, 0, 0, 0),
+                    255,
+                )
+            })
+    }
+
+    /// Discovered values of the global pointer registers, if the function uses any
+    pub fn global_pointer_values(&self) -> Vec<(RegisterId, Conf<RegisterValue>)> {
+        unsafe {
+            let mut count = 0;
+            let values_ptr = BNGetFunctionGlobalPointerValues(self.handle, &mut count);
+            if values_ptr.is_null() {
+                return Vec::new();
+            }
+
+            let values = std::slice::from_raw_parts(values_ptr, count);
+            let result = values
+                .iter()
+                .map(|value| {
+                    (
+                        RegisterId::from(value.reg),
+                        Conf::new(value.value.value.into(), value.value.confidence),
+                    )
+                })
+                .collect();
+            BNFreeRegisterValueWithConfidenceAndRegisterList(values_ptr);
+            result
+        }
     }
 
     pub fn type_tokens(
@@ -2526,32 +2630,6 @@ impl Function {
         let result = unsafe { BNGetFunctionReturnRegisters(self.handle) };
         let regs = unsafe { Array::new(result.regs, result.count, self.arch().handle()) };
         Conf::new(regs, result.confidence)
-    }
-
-    pub fn set_user_return_registers<I>(&self, values: I, confidence: u8)
-    where
-        I: IntoIterator<Item = CoreRegister>,
-    {
-        let mut regs: Box<[u32]> = values.into_iter().map(|reg| reg.id().0).collect();
-        let mut regs = BNRegisterSetWithConfidence {
-            regs: regs.as_mut_ptr(),
-            count: regs.len(),
-            confidence,
-        };
-        unsafe { BNSetUserFunctionReturnRegisters(self.handle, &mut regs) }
-    }
-
-    pub fn set_auto_return_registers<I>(&self, values: I, confidence: u8)
-    where
-        I: IntoIterator<Item = CoreRegister>,
-    {
-        let mut regs: Box<[u32]> = values.into_iter().map(|reg| reg.id().0).collect();
-        let mut regs = BNRegisterSetWithConfidence {
-            regs: regs.as_mut_ptr(),
-            count: regs.len(),
-            confidence,
-        };
-        unsafe { BNSetAutoFunctionReturnRegisters(self.handle, &mut regs) }
     }
 
     /// Flow graph of unresolved stack adjustments

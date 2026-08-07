@@ -533,6 +533,7 @@ namespace BinaryNinja
 		const LowLevelILInstruction operator[](size_t i) const;
 
 		operator _STD_VECTOR<LowLevelILInstruction>() const;
+		operator _STD_VECTOR<ExprId>() const;
 	};
 
 	/*!
@@ -2051,6 +2052,39 @@ namespace BinaryNinja
 	{};
 	template <>
 	struct LowLevelILInstructionAccessor<LLIL_NOT> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_BSWAP> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_POPCNT> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_CLZ> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_CTZ> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_RBIT> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_CLS> : public LowLevelILOneOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_MINS> : public LowLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_MAXS> : public LowLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_MINU> : public LowLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_MAXU> : public LowLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct LowLevelILInstructionAccessor<LLIL_ABS> : public LowLevelILOneOperandInstruction
 	{};
 	template <>
 	struct LowLevelILInstructionAccessor<LLIL_SX> : public LowLevelILOneOperandInstruction

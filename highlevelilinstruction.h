@@ -89,6 +89,7 @@ namespace BinaryNinja
 		DestVariableHighLevelOperandUsage,
 		SSAVariableHighLevelOperandUsage,
 		DestSSAVariableHighLevelOperandUsage,
+		PartialSSAVariableSourceHighLevelOperandUsage,
 		DestExprHighLevelOperandUsage,
 		LeftExprHighLevelOperandUsage,
 		RightExprHighLevelOperandUsage,
@@ -305,6 +306,7 @@ namespace BinaryNinja
 		const HighLevelILInstruction operator[](size_t i) const;
 
 		operator _STD_VECTOR<HighLevelILInstruction>() const;
+		operator _STD_VECTOR<ExprId>() const;
 	};
 
 	/*!
@@ -370,6 +372,7 @@ namespace BinaryNinja
 		HighLevelILInstruction GetRawOperandAsExpr(size_t operand) const;
 		Variable GetRawOperandAsVariable(size_t operand) const;
 		SSAVariable GetRawOperandAsSSAVariable(size_t operand) const;
+		SSAVariable GetRawOperandAsPartialSSAVariableSource(size_t operand) const;
 		HighLevelILInstructionList GetRawOperandAsExprList(size_t operand) const;
 		HighLevelILSSAVariableList GetRawOperandAsSSAVariableList(size_t operand) const;
 		HighLevelILIndexList GetRawOperandAsIndexList(size_t operand) const;
@@ -521,6 +524,11 @@ namespace BinaryNinja
 		SSAVariable GetDestSSAVariable() const
 		{
 			return As<N>().GetDestSSAVariable();
+		}
+		template <BNHighLevelILOperation N>
+		SSAVariable GetSourceSSAVariable() const
+		{
+			return As<N>().GetSourceSSAVariable();
 		}
 		template <BNHighLevelILOperation N>
 		HighLevelILInstruction GetDestExpr() const
@@ -699,6 +707,11 @@ namespace BinaryNinja
 			As<N>().SetDestSSAVersion(version);
 		}
 		template <BNHighLevelILOperation N>
+		void SetSourceSSAVersion(size_t version)
+		{
+			As<N>().SetSourceSSAVersion(version);
+		}
+		template <BNHighLevelILOperation N>
 		void SetParameterExprs(const _STD_VECTOR<MediumLevelILInstruction>& params)
 		{
 			As<N>().SetParameterExprs(params);
@@ -778,6 +791,7 @@ namespace BinaryNinja
 		Variable GetDestVariable() const;
 		SSAVariable GetSSAVariable() const;
 		SSAVariable GetDestSSAVariable() const;
+		SSAVariable GetSourceSSAVariable() const;
 		HighLevelILInstruction GetDestExpr() const;
 		HighLevelILInstruction GetLeftExpr() const;
 		HighLevelILInstruction GetRightExpr() const;
@@ -1163,6 +1177,14 @@ namespace BinaryNinja
 		void SetSSAVersion(size_t version) { UpdateRawOperand(1, version); }
 	};
 	template <>
+	struct HighLevelILInstructionAccessor<HLIL_VAR_SSA_PARTIAL> : public HighLevelILInstructionBase
+	{
+		SSAVariable GetDestSSAVariable() const { return GetRawOperandAsSSAVariable(0); }
+		SSAVariable GetSourceSSAVariable() const { return GetRawOperandAsPartialSSAVariableSource(0); }
+		void SetDestSSAVersion(size_t version) { UpdateRawOperand(1, version); }
+		void SetSourceSSAVersion(size_t version) { UpdateRawOperand(2, version); }
+	};
+	template <>
 	struct HighLevelILInstructionAccessor<HLIL_VAR_PHI> : public HighLevelILInstructionBase
 	{
 		SSAVariable GetDestSSAVariable() const { return GetRawOperandAsSSAVariable(0); }
@@ -1453,6 +1475,39 @@ namespace BinaryNinja
 	struct HighLevelILInstructionAccessor<HLIL_NOT> : public HighLevelILOneOperandInstruction
 	{};
 	template <>
+	struct HighLevelILInstructionAccessor<HLIL_BSWAP> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_POPCNT> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_CLZ> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_CTZ> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_RBIT> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_CLS> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_MINS> : public HighLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_MAXS> : public HighLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_MINU> : public HighLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_MAXU> : public HighLevelILTwoOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_ABS> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
 	struct HighLevelILInstructionAccessor<HLIL_SX> : public HighLevelILOneOperandInstruction
 	{};
 	template <>
@@ -1496,6 +1551,12 @@ namespace BinaryNinja
 	{};
 	template <>
 	struct HighLevelILInstructionAccessor<HLIL_FTRUNC> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_PASS_BY_REF> : public HighLevelILOneOperandInstruction
+	{};
+	template <>
+	struct HighLevelILInstructionAccessor<HLIL_RETURN_BY_REF> : public HighLevelILOneOperandInstruction
 	{};
 
 #undef _STD_VECTOR

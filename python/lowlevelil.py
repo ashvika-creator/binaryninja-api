@@ -377,7 +377,19 @@ class LowLevelILInstruction(BaseILInstruction):
 	        ("left", "expr"), ("right", "expr")
 	    ], LowLevelILOperation.LLIL_MODS_DP: [("left", "expr"), ("right", "expr")], LowLevelILOperation.LLIL_NEG: [
 	        ("src", "expr")
-	    ], LowLevelILOperation.LLIL_NOT: [("src", "expr")], LowLevelILOperation.LLIL_SX: [
+	    ], LowLevelILOperation.LLIL_NOT: [("src", "expr")], LowLevelILOperation.LLIL_BSWAP: [
+	        ("src", "expr")
+	    ], LowLevelILOperation.LLIL_POPCNT: [("src", "expr")], LowLevelILOperation.LLIL_CLZ: [
+	        ("src", "expr")
+	    ], LowLevelILOperation.LLIL_CTZ: [("src", "expr")], LowLevelILOperation.LLIL_RBIT: [
+	        ("src", "expr")
+	    ], LowLevelILOperation.LLIL_CLS: [("src", "expr")], LowLevelILOperation.LLIL_MINS: [
+	        ("left", "expr"), ("right", "expr")
+	    ], LowLevelILOperation.LLIL_MAXS: [("left", "expr"), ("right", "expr")], LowLevelILOperation.LLIL_MINU: [
+	        ("left", "expr"), ("right", "expr")
+	    ], LowLevelILOperation.LLIL_MAXU: [("left", "expr"), ("right", "expr")], LowLevelILOperation.LLIL_ABS: [
+	        ("src", "expr")
+	    ], LowLevelILOperation.LLIL_SX: [
 	        ("src", "expr")
 	    ], LowLevelILOperation.LLIL_ZX: [("src", "expr")], LowLevelILOperation.LLIL_LOW_PART: [
 	        ("src", "expr")
@@ -1359,6 +1371,61 @@ class LowLevelILNeg(LowLevelILUnaryBase, Arithmetic):
 
 @dataclass(frozen=True, repr=False, eq=False)
 class LowLevelILNot(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILBswap(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILPopcnt(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILClz(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILCtz(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILRbit(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILCls(LowLevelILUnaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMins(LowLevelILBinaryBase, Arithmetic, Signed):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMaxs(LowLevelILBinaryBase, Arithmetic, Signed):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMinu(LowLevelILBinaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMaxu(LowLevelILBinaryBase, Arithmetic):
+	pass
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILAbs(LowLevelILUnaryBase, Arithmetic):
 	pass
 
 
@@ -3132,6 +3199,17 @@ ILInstruction:Dict[LowLevelILOperation, LowLevelILInstruction] = {  # type: igno
     LowLevelILOperation.LLIL_MODS_DP: LowLevelILModsDp,                             #  [("left", "expr"), ("right", "expr")],
     LowLevelILOperation.LLIL_NEG: LowLevelILNeg,                                    #  [("src", "expr")],
     LowLevelILOperation.LLIL_NOT: LowLevelILNot,                                    #  [("src", "expr")],
+    LowLevelILOperation.LLIL_BSWAP: LowLevelILBswap,                                #  [("src", "expr")],
+    LowLevelILOperation.LLIL_POPCNT: LowLevelILPopcnt,                              #  [("src", "expr")],
+    LowLevelILOperation.LLIL_CLZ: LowLevelILClz,                                    #  [("src", "expr")],
+    LowLevelILOperation.LLIL_CTZ: LowLevelILCtz,                                    #  [("src", "expr")],
+    LowLevelILOperation.LLIL_RBIT: LowLevelILRbit,                                  #  [("src", "expr")],
+    LowLevelILOperation.LLIL_CLS: LowLevelILCls,                                    #  [("src", "expr")],
+    LowLevelILOperation.LLIL_MINS: LowLevelILMins,                                  #  [("left", "expr"), ("right", "expr")],
+    LowLevelILOperation.LLIL_MAXS: LowLevelILMaxs,                                  #  [("left", "expr"), ("right", "expr")],
+    LowLevelILOperation.LLIL_MINU: LowLevelILMinu,                                  #  [("left", "expr"), ("right", "expr")],
+    LowLevelILOperation.LLIL_MAXU: LowLevelILMaxu,                                  #  [("left", "expr"), ("right", "expr")],
+    LowLevelILOperation.LLIL_ABS: LowLevelILAbs,                                    #  [("src", "expr")],
     LowLevelILOperation.LLIL_SX: LowLevelILSx,                                      #  [("src", "expr")],
     LowLevelILOperation.LLIL_ZX: LowLevelILZx,                                      #  [("src", "expr")],
     LowLevelILOperation.LLIL_LOW_PART: LowLevelILLowPart,                           #  [("src", "expr")],
@@ -4099,6 +4177,13 @@ class LowLevelILFunction:
 			LowLevelILOperation.LLIL_PUSH,
 			LowLevelILOperation.LLIL_NEG,
 			LowLevelILOperation.LLIL_NOT,
+			LowLevelILOperation.LLIL_BSWAP,
+			LowLevelILOperation.LLIL_POPCNT,
+			LowLevelILOperation.LLIL_CLZ,
+			LowLevelILOperation.LLIL_CTZ,
+			LowLevelILOperation.LLIL_RBIT,
+			LowLevelILOperation.LLIL_CLS,
+			LowLevelILOperation.LLIL_ABS,
 			LowLevelILOperation.LLIL_SX,
 			LowLevelILOperation.LLIL_ZX,
 			LowLevelILOperation.LLIL_LOW_PART,
@@ -4129,6 +4214,10 @@ class LowLevelILFunction:
 			LowLevelILOperation.LLIL_ROL,
 			LowLevelILOperation.LLIL_ROR,
 			LowLevelILOperation.LLIL_MUL,
+			LowLevelILOperation.LLIL_MINS,
+			LowLevelILOperation.LLIL_MAXS,
+			LowLevelILOperation.LLIL_MINU,
+			LowLevelILOperation.LLIL_MAXU,
 			LowLevelILOperation.LLIL_MULU_DP,
 			LowLevelILOperation.LLIL_MULS_DP,
 			LowLevelILOperation.LLIL_DIVU,
@@ -4998,6 +5087,78 @@ class LowLevelILFunction:
 		"""
 		return self.expr(LowLevelILOperation.LLIL_MULU_DP, a, b, size=size, flags=flags, source_location=loc)
 
+	def min_signed(
+	    self, size: int, a: ExpressionIndex, b: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``min_signed`` signed minimum of expressions ``a`` and ``b`` potentially setting flags ``flags`` and returning an
+		expression of ``size`` bytes.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``mins.<size>{<flags>}(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_MINS, a, b, size=size, flags=flags, source_location=loc)
+
+	def max_signed(
+	    self, size: int, a: ExpressionIndex, b: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``max_signed`` signed maximum of expressions ``a`` and ``b`` potentially setting flags ``flags`` and returning an
+		expression of ``size`` bytes.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``maxs.<size>{<flags>}(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_MAXS, a, b, size=size, flags=flags, source_location=loc)
+
+	def min_unsigned(
+	    self, size: int, a: ExpressionIndex, b: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``min_unsigned`` unsigned minimum of expressions ``a`` and ``b`` potentially setting flags ``flags`` and returning an
+		expression of ``size`` bytes.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``minu.<size>{<flags>}(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_MINU, a, b, size=size, flags=flags, source_location=loc)
+
+	def max_unsigned(
+	    self, size: int, a: ExpressionIndex, b: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``max_unsigned`` unsigned maximum of expressions ``a`` and ``b`` potentially setting flags ``flags`` and returning an
+		expression of ``size`` bytes.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex a: LHS expression
+		:param ExpressionIndex b: RHS expression
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``maxu.<size>{<flags>}(a, b)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_MAXU, a, b, size=size, flags=flags, source_location=loc)
+
 	def div_signed(
 	    self, size: int, a: ExpressionIndex, b: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
 	    loc: Optional['ILSourceLocation'] = None
@@ -5177,6 +5338,121 @@ class LowLevelILFunction:
 		:rtype: ExpressionIndex
 		"""
 		return self.expr(LowLevelILOperation.LLIL_NOT, value, size=size, flags=flags, source_location=loc)
+
+	def byte_swap(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``byte_swap`` reverses the byte order of expression ``value`` of size ``size`` potentially setting flags
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to byte swap
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``bswap.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_BSWAP, value, size=size, flags=flags, source_location=loc)
+
+	def population_count(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``population_count`` counts the number of set bits in expression ``value`` of size ``size`` potentially setting flags
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count set bits in
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``popcnt.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_POPCNT, value, size=size, flags=flags, source_location=loc)
+
+	def count_leading_zeros(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``count_leading_zeros`` counts the leading zero bits in expression ``value`` of size ``size`` potentially setting
+		flags. The result is ``8 * size`` when ``value`` is zero.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count leading zero bits in
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``clz.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_CLZ, value, size=size, flags=flags, source_location=loc)
+
+	def count_trailing_zeros(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``count_trailing_zeros`` counts the trailing zero bits in expression ``value`` of size ``size`` potentially setting
+		flags. The result is ``8 * size`` when ``value`` is zero.
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count trailing zero bits in
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``ctz.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_CTZ, value, size=size, flags=flags, source_location=loc)
+
+	def reverse_bits(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``reverse_bits`` reverses the bit order of expression ``value`` of size ``size`` potentially setting flags
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to reverse the bits of
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``rbit.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_RBIT, value, size=size, flags=flags, source_location=loc)
+
+	def count_leading_signs(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``count_leading_signs`` counts the leading sign bits in expression ``value`` of size ``size`` (the number of bits
+		below the sign bit that match it) potentially setting flags
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to count leading sign bits in
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``cls.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_CLS, value, size=size, flags=flags, source_location=loc)
+
+	def absolute_value(
+	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,
+	    loc: Optional['ILSourceLocation'] = None
+	) -> ExpressionIndex:
+		"""
+		``absolute_value`` signed absolute value of expression ``value`` of size ``size`` potentially setting flags
+
+		:param int size: the size of the result in bytes
+		:param ExpressionIndex value: the expression to take the absolute value of
+		:param FlagWriteType flags: optional, flag write type caused by this operation
+		:param ILSourceLocation loc: location of returned expression
+		:return: The expression ``abs.<size>{<flags>}(value)``
+		:rtype: ExpressionIndex
+		"""
+		return self.expr(LowLevelILOperation.LLIL_ABS, value, size=size, flags=flags, source_location=loc)
 
 	def sign_extend(
 	    self, size: int, value: ExpressionIndex, flags: Optional['architecture.FlagWriteType'] = None,

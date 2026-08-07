@@ -417,11 +417,11 @@ tests_msr = [
     # mrs x26, s2_3_c8_c14_1                                           MRS_RS_systemmove
     (b'\x3A\x8E\x33\xD5', 'LLIL_INTRINSIC([x26],_ReadMSR,[LLIL_CONST.d(0x9C71)])'),
     # msr spsel, #0x9                                                  MSR_SI_pstate
-    (b'\xBF\x49\x00\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0xFF13),LLIL_CONST.d(0x9)])'),
+    (b'\xBF\x49\x00\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0x205),LLIL_CONST.d(0x9)])'),
     # msr s0_0_c4_c5_4, xzr                                            MSR_SI_pstate
     (b'\x9F\x45\x00\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0xC213),LLIL_CONST.d(0x5)])'),
     # msr daifset, #0xe                                                MSR_SI_pstate
-    (b'\xDF\x4E\x03\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0xDA11),LLIL_CONST.d(0xE)])'),
+    (b'\xDF\x4E\x03\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0x1A06),LLIL_CONST.d(0xE)])'),
     # msr dit, #0x5                                                    MSR_SI_pstate
     (b'\x5F\x45\x03\xD5', 'LLIL_INTRINSIC([],_WriteMSR,[LLIL_CONST.d(0xDA15),LLIL_CONST.d(0x5)])'),
     # msr s3_3_c1_c9_1, x11                                            MSR_SR_systemmove
@@ -6144,21 +6144,21 @@ tests_sha = [
 tests_rev = [
     (b'\x49\x29\xC8\x9A', 'LLIL_SET_REG.q(x9,LLIL_ASR.q(LLIL_REG.q(x10),LLIL_REG.q(x8)))'), # asr    x9, x10, x8
     # rev16 w25, w2
-    (b'\x59\x04\xC0\x5A', 'LLIL_INTRINSIC([w25],_byteswap,[LLIL_REG.d(w2)])'),
+    (b'\x59\x04\xC0\x5A', 'LLIL_SET_REG.d(w25,LLIL_ROR.d(LLIL_BSWAP.d(LLIL_REG.d(w2)),LLIL_CONST.b(0x10)))'),
     # rev16 w25, w6
-    (b'\xD9\x04\xC0\x5A', 'LLIL_INTRINSIC([w25],_byteswap,[LLIL_REG.d(w6)])'),
+    (b'\xD9\x04\xC0\x5A', 'LLIL_SET_REG.d(w25,LLIL_ROR.d(LLIL_BSWAP.d(LLIL_REG.d(w6)),LLIL_CONST.b(0x10)))'),
     # rev16 x23, x3
-    (b'\x77\x04\xC0\xDA', 'LLIL_INTRINSIC([x23],_byteswap,[LLIL_REG.q(x3)])'),
+    (b'\x77\x04\xC0\xDA', 'LLIL_INTRINSIC([x23],__rev16,[LLIL_REG.q(x3)])'),
     # rev16 x14, x17
-    (b'\x2E\x06\xC0\xDA', 'LLIL_INTRINSIC([x14],_byteswap,[LLIL_REG.q(x17)])'),
+    (b'\x2E\x06\xC0\xDA', 'LLIL_INTRINSIC([x14],__rev16,[LLIL_REG.q(x17)])'),
     # rev16 v8.16b, v26.16b
     (b'\x48\x1B\x20\x4E', 'LLIL_INTRINSIC([v8],vrev16q_s8,[LLIL_REG.o(v26)])'),
     # rev16 v4.8b, v27.8b
     (b'\x64\x1B\x20\x0E', 'LLIL_INTRINSIC([v4],vrev16_s8,[LLIL_REG.o(v27)])'),
     # rev32 x29, x8
-    (b'\x1D\x09\xC0\xDA', 'LLIL_INTRINSIC([fp],_byteswap,[LLIL_REG.q(x8)])'),
+    (b'\x1D\x09\xC0\xDA', 'LLIL_SET_REG.q(fp,LLIL_ROR.q(LLIL_BSWAP.q(LLIL_REG.q(x8)),LLIL_CONST.b(0x20)))'),
     # rev32 x18, x26
-    (b'\x52\x0B\xC0\xDA', 'LLIL_INTRINSIC([x18],_byteswap,[LLIL_REG.q(x26)])'),
+    (b'\x52\x0B\xC0\xDA', 'LLIL_SET_REG.q(x18,LLIL_ROR.q(LLIL_BSWAP.q(LLIL_REG.q(x26)),LLIL_CONST.b(0x20)))'),
     # rev32 v18.4h, v15.4h
     (b'\xF2\x09\x60\x2E', 'LLIL_INTRINSIC([v18],vrev32_s16,[LLIL_REG.o(v15)])'),
     # rev32 v20.8h, v26.8h
@@ -6168,13 +6168,13 @@ tests_rev = [
     # rev64 v17.16b, v18.16b
     (b'\x51\x0A\x20\x4E', 'LLIL_INTRINSIC([v17],vrev64q_s8,[LLIL_REG.o(v18)])'),
     # rev w14, w21
-    (b'\xAE\x0A\xC0\x5A', 'LLIL_INTRINSIC([w14],_byteswap,[LLIL_REG.d(w21)])'),
+    (b'\xAE\x0A\xC0\x5A', 'LLIL_SET_REG.d(w14,LLIL_BSWAP.d(LLIL_REG.d(w21)))'),
     # rev w23, w3
-    (b'\x77\x08\xC0\x5A', 'LLIL_INTRINSIC([w23],_byteswap,[LLIL_REG.d(w3)])'),
+    (b'\x77\x08\xC0\x5A', 'LLIL_SET_REG.d(w23,LLIL_BSWAP.d(LLIL_REG.d(w3)))'),
     # rev x11, x6
-    (b'\xCB\x0C\xC0\xDA', 'LLIL_INTRINSIC([x11],_byteswap,[LLIL_REG.q(x6)])'),
+    (b'\xCB\x0C\xC0\xDA', 'LLIL_SET_REG.q(x11,LLIL_BSWAP.q(LLIL_REG.q(x6)))'),
     # rev x18, x0
-    (b'\x12\x0C\xC0\xDA', 'LLIL_INTRINSIC([x18],_byteswap,[LLIL_REG.q(x0)])'),
+    (b'\x12\x0C\xC0\xDA', 'LLIL_SET_REG.q(x18,LLIL_BSWAP.q(LLIL_REG.q(x0)))'),
     # rev p1.s, p8.s
     (b'\x01\x41\xB4\x05', 'LLIL_UNIMPL()'),
     # rev p15.d, p11.d
@@ -12302,9 +12302,9 @@ tests_grab_bag = [
     (b'\x20\x00\x02\xBA', 'LLIL_SET_REG.q(x0,LLIL_ADC.q{*}(LLIL_REG.q(x1),LLIL_REG.q(x2),LLIL_FLAG(c)))'), # adcs x0, x1, x2
     (b'\x08\x75\x93\x13', 'LLIL_SET_REG.d(w8,LLIL_LSR.q(LLIL_OR.q(LLIL_LSL.q(LLIL_REG.d(w8),LLIL_CONST.b(0x20)),LLIL_REG.d(w19)),LLIL_CONST.b(0x1D)))'), # extr    w8, w8, w19, #0x1d
     (b'\x20\x28\xC2\x93', 'LLIL_SET_REG.q(x0,LLIL_LSR.o(LLIL_OR.o(LLIL_LSL.o(LLIL_REG.q(x1),LLIL_CONST.b(0x40)),LLIL_REG.q(x2)),LLIL_CONST.b(0xA)))'), # extr x0, x1, x2, #10
-    (b'\xC6\x0C\xC0\xDA', 'LLIL_INTRINSIC([x6],_byteswap,[LLIL_REG.q(x6)])'), # rev x6, x6
-    (b'\xCB\x10\xC0\xDA', 'LLIL_INTRINSIC([x11],_CountLeadingZeros,[LLIL_REG.q(x6)])'), # clz    x11, x6
-    (b'\x63\x00\xC0\xDA', 'LLIL_INTRINSIC([x3],__rbit,[LLIL_REG.q(x3)])'), # rbit    x3, x3
+    (b'\xC6\x0C\xC0\xDA', 'LLIL_SET_REG.q(x6,LLIL_BSWAP.q(LLIL_REG.q(x6)))'), # rev x6, x6
+    (b'\xCB\x10\xC0\xDA', 'LLIL_SET_REG.q(x11,LLIL_CLZ.q(LLIL_REG.q(x6)))'), # clz    x11, x6
+    (b'\x63\x00\xC0\xDA', 'LLIL_SET_REG.q(x3,LLIL_RBIT.q(LLIL_REG.q(x3)))'), # rbit    x3, x3
     # Unknown system register
     # (b'\x41\x00\x1B\xD5', 'LLIL_INTRINSIC([sysreg_unknown],_WriteStatusReg,[LLIL_REG.q(x1)])'), # msr s3_3_c0_c0_2, x1
     # (b'\x43\x00\x3B\xD5', 'LLIL_INTRINSIC([x3],_ReadStatusReg,[LLIL_REG.q(sysreg_unknown)])'), # mrs x3, s3_3_c0_c0_2
@@ -12725,7 +12725,56 @@ tests_grab_bag = [
     (b'\x1F\x20\x03\xD5', 'LLIL_NOP()'), # nop, gets optimized from function
 ]
 
+# FEAT_CSSC integer min/max and absolute value (lifted to dedicated LLIL ops)
+tests_cssc = [
+    # smax    w0, w1, w2
+    (b'\x20\x60\xc2\x1a', 'LLIL_SET_REG.d(w0,LLIL_MAXS.d(LLIL_REG.d(w1),LLIL_REG.d(w2)))'),
+    # smax    x0, x1, x2
+    (b'\x20\x60\xc2\x9a', 'LLIL_SET_REG.q(x0,LLIL_MAXS.q(LLIL_REG.q(x1),LLIL_REG.q(x2)))'),
+    # umax    w0, w1, w2
+    (b'\x20\x64\xc2\x1a', 'LLIL_SET_REG.d(w0,LLIL_MAXU.d(LLIL_REG.d(w1),LLIL_REG.d(w2)))'),
+    # umax    x0, x1, x2
+    (b'\x20\x64\xc2\x9a', 'LLIL_SET_REG.q(x0,LLIL_MAXU.q(LLIL_REG.q(x1),LLIL_REG.q(x2)))'),
+    # smin    w0, w1, w2
+    (b'\x20\x68\xc2\x1a', 'LLIL_SET_REG.d(w0,LLIL_MINS.d(LLIL_REG.d(w1),LLIL_REG.d(w2)))'),
+    # smin    x0, x1, x2
+    (b'\x20\x68\xc2\x9a', 'LLIL_SET_REG.q(x0,LLIL_MINS.q(LLIL_REG.q(x1),LLIL_REG.q(x2)))'),
+    # umin    w0, w1, w2
+    (b'\x20\x6c\xc2\x1a', 'LLIL_SET_REG.d(w0,LLIL_MINU.d(LLIL_REG.d(w1),LLIL_REG.d(w2)))'),
+    # umin    x0, x1, x2
+    (b'\x20\x6c\xc2\x9a', 'LLIL_SET_REG.q(x0,LLIL_MINU.q(LLIL_REG.q(x1),LLIL_REG.q(x2)))'),
+    # abs     w0, w1
+    (b'\x20\x20\xc0\x5a', 'LLIL_SET_REG.d(w0,LLIL_ABS.d(LLIL_REG.d(w1)))'),
+    # abs     x0, x1
+    (b'\x20\x20\xc0\xda', 'LLIL_SET_REG.q(x0,LLIL_ABS.q(LLIL_REG.q(x1)))'),
+    # smax    w0, w1, #0x5
+    (b'\x20\x14\xc0\x11', 'LLIL_SET_REG.d(w0,LLIL_MAXS.d(LLIL_REG.d(w1),LLIL_CONST.d(0x5)))'),
+    # umin    w0, w1, #0x7
+    (b'\x20\x1c\xcc\x11', 'LLIL_SET_REG.d(w0,LLIL_MINU.d(LLIL_REG.d(w1),LLIL_CONST.d(0x7)))'),
+    # ctz     w0, w1
+    (b'\x20\x18\xc0\x5a', 'LLIL_SET_REG.d(w0,LLIL_CTZ.d(LLIL_REG.d(w1)))'),
+    # ctz     x0, x1
+    (b'\x20\x18\xc0\xda', 'LLIL_SET_REG.q(x0,LLIL_CTZ.q(LLIL_REG.q(x1)))'),
+    # cnt     w0, w1 (FEAT_CSSC scalar population count)
+    (b'\x20\x1c\xc0\x5a', 'LLIL_SET_REG.d(w0,LLIL_POPCNT.d(LLIL_REG.d(w1)))'),
+    # cnt     x0, x1 (FEAT_CSSC scalar population count)
+    (b'\x20\x1c\xc0\xda', 'LLIL_SET_REG.q(x0,LLIL_POPCNT.q(LLIL_REG.q(x1)))'),
+
+    # Vector/SVE forms of these mnemonics are not FEAT_CSSC scalar ops and must not be lifted
+    # as whole-register scalar operations. The NEON cnt has a per-element intrinsic; the others
+    # have no native scalar representation and are left unimplemented.
+    # cnt     v0.8b, v1.8b
+    (b'\x20\x58\x20\x0e', 'LLIL_INTRINSIC([v0],_PopulationCount,[LLIL_REG.o(v1)])'),
+    # cnt     v0.16b, v1.16b
+    (b'\x20\x58\x20\x4e', 'LLIL_INTRINSIC([v0],_PopulationCount,[LLIL_REG.o(v1)])'),
+    # abs     v0.8b, v1.8b
+    (b'\x20\xb8\x20\x0e', 'LLIL_UNIMPL()'),
+    # abs     v0.2d, v1.2d
+    (b'\x20\xb8\xe0\x4e', 'LLIL_UNIMPL()'),
+]
+
 test_cases = \
+	tests_cssc + \
 	tests_shll + \
 	tests_udf + \
 	tests_pac + \
